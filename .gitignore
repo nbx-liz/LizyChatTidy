@@ -1,18 +1,18 @@
 # Dependencies and build output
 node_modules/
-dist/
-coverage/
-playwright-report/
-test-results/
-*.zip
+/dist/
+/coverage/
+/playwright-report/
+/test-results/
+# Store submission archives (synthetic test ZIPs elsewhere stay tracked)
+/release/
 
 # Local agent state
 .claude/settings.local.json
 .claude/.cc-writes/
 
-# Never commit real conversation data or exports
-exports/
-*.chatgpt-export/
+# Real conversation exports belong only here and are never committed
+/local-data/
 
 # Editors / OS
 .idea/

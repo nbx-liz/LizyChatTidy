@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Verify handoff bundle checksums
-        working-directory: docs/handoff
-        run: sha256sum --strict -c SHA256SUMS.txt
+      - name: Verify handoff bundle (pinned manifest, checksums, file set)
+        run: bash scripts/verify-handoff.sh docs/handoff
+      - name: Verify the checker rejects tampered bundles
+        run: bash scripts/test-verify-handoff.sh
