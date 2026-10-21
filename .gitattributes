@@ -1,0 +1,2 @@
+# The handoff bundle is verified byte-for-byte against SHA256SUMS.txt
+docs/handoff/** -text

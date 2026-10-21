@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+/dist/
+/coverage/
+/playwright-report/
+/test-results/
+# Store submission archives (synthetic test ZIPs elsewhere stay tracked)
+/release/
+
+# Local agent state
+.claude/settings.local.json
+.claude/.cc-writes/
+
+# Real conversation exports belong only here and are never committed
+/local-data/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
