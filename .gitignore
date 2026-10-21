@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.zip
+
+# Local agent state
+.claude/settings.local.json
+.claude/.cc-writes/
+
+# Never commit real conversation data or exports
+exports/
+*.chatgpt-export/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
