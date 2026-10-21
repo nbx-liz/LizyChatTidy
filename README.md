@@ -26,6 +26,11 @@ Not affiliated with or endorsed by OpenAI or Anthropic.
 
 ## Documentation
 
+Specifications are written in Japanese; code and contributions are in English.
+
+- [`BLUEPRINT.md`](BLUEPRINT.md) — the authoritative specification: scope,
+  invariants, architecture, data model, deletion protocol, UI.
+- [`HISTORY.md`](HISTORY.md) — proposals and decisions.
 - [`docs/handoff/`](docs/handoff/) — the developer handoff bundle v0.1.1
   (requirements, backlog DEV01–14, acceptance tests AT01–35, reference
   contracts, sources). Kept verbatim; integrity is checked in CI against
