@@ -21,11 +21,12 @@ Proposal から決定までの記録。公開 API・データ契約・保存形�
 
 ### 目的
 
-`docs/handoff/contracts.reference.ts` と handoff 本文の間にある 3 つの食い違いを、実装前に解消する。
+`docs/handoff/contracts.reference.ts` と handoff 本文の間にある 4 つの食い違いを、実装前に解消する。
 
 1. `KeepSnapshot.protectedRefs: ConversationRef[]` は accountKey/workspaceKey を必須とするため、主体が未検証の会話（handoff §08: 現在のアカウントと結び付けられない公式エクスポート由来の会話）に KEEP を付けられない。必須機能 FR05 が P1 の読み取り専用経路で成立しない。
 2. handoff §05 の Import Worker に対応する契約がなく、DEV05 に型の目標がない。
 3. `WebHistoryAdapter` が読み取り（`collect`）と破壊的操作（`commitOne`）を同じ型に持つため、読み取り専用のビルドにも削除メソッドが含まれる。
+4. `FeatureGate` が technical・termsAndPermission・safety の 3 判定しか持たず、handoff §02 が別判定とする Chrome Web Store の審査適合を表せない。
 
 ### 変更内容
 
@@ -41,6 +42,7 @@ Proposal から決定までの記録。公開 API・データ契約・保存形�
    }
    type ImportIssue = { readonly code: string; readonly entry: string | null };
    interface ImportResult {
+     readonly status: "complete" | "partial" | "failed" | "cancelled";
      readonly records: readonly ConversationRecord[];
      readonly coverage: Coverage;
      readonly issues: readonly ImportIssue[]; // 取り込めなかった項目。黙って捨てない
@@ -51,13 +53,15 @@ Proposal から決定までの記録。公開 API・データ契約・保存形�
      parse(file: Blob, limits: ImportLimits, signal: AbortSignal): Promise<ImportResult>;
    }
    ```
-   上限超過・未知形式は部分結果を削除機能へ渡さずに中止する（AT10）。
+   - 上限超過・未知形式・壊れたエントリー・中止は、部分結果を削除機能へ渡さない（AT10）。削除計画の候補にできるのは `status: "complete"` かつ `issues` が空の取り込みに由来する会話だけで、Domain の計画生成がこれを検査する。それ以外の結果は閲覧と KEEP にだけ使う。
+   - 分岐した会話本文を連結しない。`ConversationRecord` は分岐構造を保持する（具体的な型は DEV05 で実データの形式を確認してから決める）。
 3. **Adapter の分割**: `WebHistoryAdapter` を能力ごとに分ける。
    - `ReadAdapter`: `inspectScope`, `collect`
    - `AssistAdapter`: `openConversation`
    - `DeleteAdapter`: `preflight`, `commitOne`
 
    各 Adapter は自分の能力の `FeatureGate` を返す。`DeleteAdapter` はビルド時の有効化フラグで同梱を切り替え、gate が allowed でない配布版には実装コード自体を含めない。
+4. **gate の判定項目**: `FeatureGate` に `storePolicy: GateStatus` を加え、technical・termsAndPermission・storePolicy・safety の 4 判定とする。`allowed` の根拠にしてはならないもの（個人利用、手動開始、OSS 公開、チェックボックスでの同意）は BLUEPRINT §10 に定める。
 
 ### 影響範囲
 
@@ -76,8 +80,11 @@ P1 以降のすべての型定義（`src/` の契約）、DEV05・DEV06・DEV08�
 
 - `scope: null` の KEEP が、任意の主体の同じ `provider` + `conversationId` を保護する。異なる `conversationId`・異なる `provider` は保護しない（境界の照合は完全一致）。
 - 主体付きの KEEP は、主体が異なる同じ `conversationId` を保護しない。
-- 上限を超える ZIP/JSON で `parse` が中止され、`records` を削除計画へ渡せない。
+- 上限超過、壊れたエントリーを含む ZIP、途中で中止した取り込みのいずれでも、`status` が `complete` 以外または `issues` が空でなく、その `records` から削除計画を生成できない。
+- 分岐を持つ合成会話を取り込んだとき、分岐が連結されず別々に保持・検索される。
 - Delete 無効のビルド成果物に `commitOne` の実装が含まれないことを、ビルド成果物の検査で確認する。
+- `storePolicy` だけが `allowed` でない能力は配布版で無効になる。
+- KEEP と確定の順序（BLUEPRINT §7）: 最終の KEEP 読み取りの後、確定指示の送出前に KEEP を追加すると、その件は確定されない（合成 Adapter で検証）。
 
 Firing rate: unmeasurable before implementation (ビルド成果物も実サービスの主体情報もまだ存在しない; DEV03 の能力表と最初の配布ビルドができた時点で、Delete 同梱の有無と `scope: null` KEEP の件数を測定できる)
 
