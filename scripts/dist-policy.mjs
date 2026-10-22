@@ -2,6 +2,11 @@
 // BLUEPRINT §4 and P-0004. Pure functions over file contents, so the same
 // rules run in unit tests and against the real dist/ in CI. Every check fails
 // closed: input it cannot interpret is reported as a violation.
+//
+// Scope (P-0004 item 9): this is defence in depth against our own build
+// drifting out of policy (a dependency or config change). It is not a
+// sandbox for adversarial input; runtime protection comes from the CSP and
+// from the extension not shipping the corresponding code.
 
 // `storage` is added with DEV08 (P-0004 item 6); until then it is a violation.
 export const ALLOWED_PERMISSIONS = Object.freeze(["activeTab", "scripting"]);
@@ -110,7 +115,9 @@ const FORBIDDEN_HTML_FRAGMENTS = Object.freeze([
  * forbidden fragments, so any occurrence is reported.
  */
 export function checkHtml(name, html) {
-  const body = html.replace(/^\s*<!doctype html>/i, "");
+  // URL parsing drops tab, LF and CR anywhere in a URL, so remove them first:
+  // otherwise "/\n/host" would hide a protocol-relative reference.
+  const body = html.replace(/^\s*<!doctype html>/i, "").replace(/[\t\n\r]/g, "");
   return FORBIDDEN_HTML_FRAGMENTS.filter(([fragment]) => body.includes(fragment)).map(
     ([, label]) => `${name}: contains ${label}`,
   );
@@ -137,9 +144,10 @@ export function checkScripts(files) {
       problems.push(`${name}: missing`);
       continue;
     }
-    // Fail closed: any `import` token that is not part of a longer identifier
-    // or a property access, whatever follows it (spaces, comments, strings).
-    if (/(?:^|[^\w$.])import(?![\w$])/m.test(source)) {
+    // Fail closed: any `import` token that is not part of a longer identifier,
+    // whatever precedes or follows it (spread, comments, strings). A property
+    // named `import` is rejected too; these bundles have no reason to use one.
+    if (/(?:^|[^\w$])import(?![\w$])/m.test(source)) {
       problems.push(`${name}: must not import modules`);
     }
   }

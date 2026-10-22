@@ -88,6 +88,11 @@ describe("checkHtml", () => {
       '<link rel="preload" as="image" imagesrcset="https://evil.example/i.png 1x">',
     ],
     ["an attribute after a slash", "<img/src=https://evil.example/image.png>"],
+    [
+      "a protocol-relative URL split by LF",
+      '<img src="/\n/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x.png">',
+    ],
+    ["a protocol-relative URL split by CR and tab", '<img src="/\r\t/evil.example/x.png">'],
     ["a reference after a quoted >", '<img alt=">" src=https://evil.example/i.png>'],
     ["a CSS url in a style attribute", '<div style="background:url(//evil.example/i.png)">'],
   ])("flags %s", (_label, html) => {
@@ -114,8 +119,8 @@ describe("checkScripts", () => {
     expect(checkScripts(ok)).toEqual([]);
   });
 
-  it("does not mistake property access or identifiers for imports", () => {
-    const source = "obj.import(x); const importantValue = 1; reimport();";
+  it("does not mistake longer identifiers for imports", () => {
+    const source = "const importantValue = 1; reimport(); $import(); import_x();";
     expect(checkScripts({ ...ok, "sw.js": source })).toEqual([]);
   });
 
@@ -140,6 +145,11 @@ describe("checkScripts", () => {
       { ...ok, "sw.js": 'const p = import/* comment */("./dependency.js");' },
     ],
     ["an import followed by a line comment", { ...ok, "content.js": 'import// c\n"./x.js";' }],
+    [
+      "a dynamic import inside an object spread",
+      { ...ok, "sw.js": 'const p={...import("./x.js")};' },
+    ],
+    ["a property named import", { ...ok, "sw.js": "obj.import(x);" }],
     ["a missing content script", { "sw.js": "x();" }],
   ])("flags %s", (_label, files) => {
     expect(checkScripts(files).length).toBeGreaterThan(0);

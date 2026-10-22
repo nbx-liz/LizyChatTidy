@@ -249,7 +249,7 @@ BLUEPRINT §4 が DEV04 で決めるとした、Controller と Import Worker の
 6. 権限は `activeTab` と `scripting` だけとする。`storage` は KEEP の保存を実装する DEV08 で追加する。host permissions、`content_scripts`、`web_accessible_resources`、`externally_connectable` は持たない。
 7. 拡張ページの CSP を既定より狭め、`connect-src 'none'` などで拡張ページからのネットワーク通信を禁じる（INV-01）。サービスへの要求は Content Script から送る（P-0003）。
 8. ビルドは Vite で 3 回に分ける: 管理画面（HTML エントリー）、Content Script（単一ファイルの IIFE）、Service Worker（単一ファイルの IIFE）。`executeScript` で注入するファイルと classic の Service Worker は import を持てないため。
-9. ビルド成果物の検査（`scripts/check-dist.mjs`）を CI で実行する: manifest の権限と禁止項目、HTML の外部参照、`MAIN` world の指定、`onMessage` の登録が Content Script だけであること。
+9. ビルド成果物の検査（`scripts/check-dist.mjs`）を CI で実行する: manifest の権限と禁止項目、CSP の必須ディレクティブ、HTML の外部参照、`MAIN` world の指定、`onMessage` の登録が Content Script だけであること、Content Script と Service Worker が import を持たないこと。この検査は、依存の更新やビルド設定の変更で成果物が誤って規則に反することを検出する多層防御である。敵対的に作られた入力をすべて検出する仕組みではなく、実行時の防御は CSP と、拡張が対応するコードを持たないことによる。判定できない形は違反として扱う（安全側に倒す）。
 10. `minimum_chrome_version` は `120` とする。実測で裏付けたものではなく、DEV13 で確かめる。
 
 ### 影響範囲
