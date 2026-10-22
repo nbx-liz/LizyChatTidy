@@ -214,3 +214,15 @@ BLUEPRINT §1〜§12、P-0001 の `FeatureGate` と `DeleteAdapter`、DEV03（Po
 実サービス（所有者が使い捨て会話で実施）: BLUEPRINT §10「検証」の 7 項目を ChatGPT と Claude Code それぞれで確認し、観測できなかった項目の能力を未検証のまま無効にする。
 
 Firing rate: unmeasurable before implementation (内部 API の Adapter も実サービスでの観測もまだない; DEV03 の PoC と所有者の使い捨て会話での検証で、個人用ビルドの有効化条件の成立、INV-19 の停止の発生、`partial` 判定の割合を測定できる)
+
+## D-0002: 対象範囲と対応環境の所有者決定（2026-10-22）
+
+状態: 決定
+
+handoff が ADR として残すとした「対象プラン」「言語」の判断を記録する。詳細の表は `docs/p0/DEV01-scope.md`。
+
+- ChatGPT: 所有者の個人アカウント（Plus または Pro）の個人ワークスペースだけを対象にする。組織ワークスペース（Team / Business / Enterprise / Edu）は対象外とし、主体を個人ワークスペースと確認できない場合は自動削除を無効にする。
+- Claude Code on the web: 所有者の Max プラン（Consumer Terms）の組織だけを対象にする。Team / Enterprise の組織は対象外。
+- 対応環境の目標: Google Chrome 安定版の Windows、macOS、Linux。検証状態は DEV13 で記録し、実測前に対応済みとは宣言しない。
+- UI 言語: サービス側は日本語 UI を検証の前提にする。拡張の表示は日本語。削除の判定は UI 文言に依存させない（P-0003）。
+- 進め方: DEV01 → DEV04（拡張の雛形）→ DEV03（合成データでの Adapter PoC と実画面検証の手順書）の順に進め、所有者による実画面検証の手前で止める。
