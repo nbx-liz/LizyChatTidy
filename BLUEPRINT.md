@@ -98,7 +98,7 @@ Extension UI（専用タブ, React）
        └─ Claude Code Web Adapter（Read / Assist / Delete）+ Content Script
 ```
 
-ビルド構成は Vite + React + TypeScript strict、manifest は手書き、複数エントリーでビルドする（P-0002）。Import Worker と Controller をどの実行コンテキスト（Web Worker、Service Worker、Offscreen Document 等）に置くかは DEV04 で決め、Proposal に記録する。Service Worker は終了し得るため [S07]、どこに置いても INV-08 を守る。
+ビルド構成は Vite + React + TypeScript strict、manifest は手書き、複数エントリーでビルドする（P-0002）。実行コンテキストは P-0004 で決めた。Controller は管理画面タブのページ内（UI とは別モジュール）、Import Worker は管理画面から起動する Dedicated Web Worker に置く。Service Worker は管理画面タブを開くだけで、状態を持たずメッセージも受け付けない。Service Worker は終了し得るため [S07] Controller を置かず、管理画面タブの寿命と承認の寿命を一致させる（INV-08）。Content Script は manifest で宣言せず、対応ページと判定できたタブにだけ Controller が注入する。
 
 ### 責務と信頼境界
 
@@ -124,7 +124,8 @@ Extension UI（専用タブ, React）
 | 権限/機能 | 方針 |
 | --- | --- |
 | activeTab / scripting | 利用者が対象タブで開始したときの一時アクセスを第一候補にする [S06]。付与の持続範囲（同一オリジン内の遷移、再読み込み、別オリジンへの移動、タブ閉鎖）は DEV03 で対象の Chrome 版で実測し、失効は停止として扱う。 |
-| storage | 設定と同意済みの管理状態だけ。Content Script からの直接読み取りを制限する [S08]。 |
+| storage | 設定と同意済みの管理状態だけ。Content Script からの直接読み取りを制限する [S08]。保存を実装する DEV08 で追加する（P-0004）。 |
+| 拡張ページの CSP | `connect-src 'none'` などで拡張ページからのネットワーク通信を禁じる（P-0004, INV-01）。 |
 | host permissions | 必要性を実証した場合のみ、対象オリジンに限定して任意権限として追加する。 |
 | 不採用 | `<all_urls>`, cookies, history, webRequest, debugger, nativeMessaging。 |
 

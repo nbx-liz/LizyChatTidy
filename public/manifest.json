@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "LizyChatTidy",
+  "version": "0.0.1",
+  "description": "Choose which ChatGPT and Claude Code on the web conversations to keep, and tidy the rest. Pre-alpha.",
+  "minimum_chrome_version": "120",
+  "permissions": ["activeTab", "scripting"],
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "action": {
+    "default_title": "LizyChatTidy"
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; connect-src 'none'; frame-src 'none'; img-src 'self'; font-src 'self'; form-action 'none'"
+  }
+}

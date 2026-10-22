@@ -122,6 +122,10 @@ handoff §05 が開発時に固定するとした TypeScript/React/ビルドツ�
 - クリーン環境で `pnpm install --frozen-lockfile` からビルドでき、manifest に BLUEPRINT §4 の不採用権限が含まれない。
 - CI で Biome、型検査、Vitest が実行され、失敗で赤になる。
 
+### 決定（2026-10-22、DEV04 の雛形で実装）
+
+本 Proposal の構成で実装した。導入時に固定した版（公開から 2 週間以上経った安定版から選んだ）: vite 8.3.3、@vitejs/plugin-react 6.1.2、react / react-dom 19.3.0、typescript 7.0.2、vitest 5.0.3、@biomejs/biome 2.5.15、@types/chrome 0.3.4、@types/react / @types/react-dom 19.3.0。パッケージ管理は pnpm 12.14.0（`packageManager` で固定）、Node.js 24。Playwright は統合試験を加える PR で導入する。
+
 ## P-0003: 個人用ビルドの自動一括削除と内部 Web API 方式
 
 状態: 提案（2026-10-22）。次の事項は所有者が決定済み（2026-10-22）: 自動一括削除を個人利用のために作る、規約上のリスクを所有者が受容する、OpenAI・Anthropic へ許可を問い合わせない、ストア等で一般公開しない、方式は内部 Web API（M1）とし画面操作の自動化は採らない、ChatGPT に限り INV-02 を弱める。本 Proposal はそれに伴う BLUEPRINT の改訂範囲を記録する。
@@ -226,3 +230,51 @@ handoff が ADR として残すとした「対象プラン」「言語」の判�
 - 対応環境の目標: Google Chrome 安定版の Windows、macOS、Linux。検証状態は DEV13 で記録し、実測前に対応済みとは宣言しない。
 - UI 言語: サービス側は日本語 UI を検証の前提にする。拡張の表示は日本語。削除の判定は UI 文言に依存させない（P-0003）。
 - 進め方: DEV01 → DEV04（拡張の雛形）→ DEV03（合成データでの Adapter PoC と実画面検証の手順書）の順に進め、所有者による実画面検証の手前で止める。
+
+## P-0004: 実行コンテキスト・メッセージ・権限（DEV04）
+
+状態: 提案（2026-10-22）
+
+### 目的
+
+BLUEPRINT §4 が DEV04 で決めるとした、Controller と Import Worker の実行コンテキスト、拡張内メッセージ、権限を決める。handoff が ADR として残すとした権限の判断もここに記録する。
+
+### 変更内容
+
+1. 管理画面は拡張専用タブ（`app.html`）に置き、Controller はそのタブのページ内で動かす（UI とは別モジュール）。承認・計画は Controller のメモリにだけ置くため、タブを閉じれば承認も消え、INV-08 が構造的に成り立つ。Service Worker は終了し得るため Controller を置かない。
+2. Service Worker は、拡張アイコンのクリックで管理画面タブを開き、クリックされたタブの ID を管理画面の URL に渡すだけとする。状態を持たず、メッセージを受け付けない。
+3. Import Worker は管理画面から起動する Dedicated Web Worker とする（実装は DEV05）。
+4. Content Script は manifest で宣言せず、Controller が `chrome.scripting.executeScript` で対象タブの ISOLATED world に注入する（INV-18）。注入は、対象タブの URL が対応ページ（`https://chatgpt.com` のオリジン、または `https://claude.ai` の `/code` 以下）と完全一致で判定できた場合だけ行う。対象外のサイトには注入しない。注入の権限は、利用者が対象タブで拡張アイコンを押したときの activeTab の一時付与に頼る。管理画面タブ（別タブ）からこの付与で対象タブへ注入・送信できることは未実測であり、Chrome 上の統合試験と DEV03 で確かめる。成り立たない場合は、対象オリジンに限った任意の host 権限を別の Proposal で検討する。
+5. メッセージは Controller から Content Script への要求と、その応答だけとする。Content Script から始まるメッセージを Controller も Service Worker も受け付けない（`runtime.onMessage` を登録しない）。Content Script は、送信元が自拡張の拡張ページ（`sender.id` が自拡張、`sender.tab` がない、`sender.url` が自拡張のオリジン）であること、版・種類・キーの完全一致、期限、一回限りの実行 ID を検証する（INV-11）。型は手書きの実行時検証で確かめ、検証ライブラリの依存を加えない。
+6. 権限は `activeTab` と `scripting` だけとする。`storage` は KEEP の保存を実装する DEV08 で追加する。host permissions、`content_scripts`、`web_accessible_resources`、`externally_connectable` は持たない。
+7. 拡張ページの CSP を既定より狭め、`connect-src 'none'` などで拡張ページからのネットワーク通信を禁じる（INV-01）。サービスへの要求は Content Script から送る（P-0003）。
+8. ビルドは Vite で 3 回に分ける: 管理画面（HTML エントリー）、Content Script（単一ファイルの IIFE）、Service Worker（単一ファイルの IIFE）。`executeScript` で注入するファイルと classic の Service Worker は import を持てないため。
+9. ビルド成果物の検査（`scripts/check-dist.mjs`）を CI で実行する: manifest の権限と禁止項目、CSP の必須ディレクティブ、HTML の外部参照、`MAIN` world の指定、`onMessage` の登録が Content Script だけであること、Content Script と Service Worker が import を持たないこと。この検査は、依存の更新やビルド設定の変更で成果物が誤って規則に反することを検出する多層防御である。敵対的に作られた入力をすべて検出する仕組みではなく、実行時の防御は CSP と、拡張が対応するコードを持たないことによる。判定できない形は違反として扱う（安全側に倒す）。
+10. `minimum_chrome_version` は `120` とする。実測で裏付けたものではなく、DEV13 で確かめる。
+
+### 影響範囲
+
+BLUEPRINT §4、雛形のすべてのエントリー、CI。
+
+### 互換性
+
+新規。既存の成果物はない。
+
+### 代替案
+
+- Controller を Service Worker に置く: 終了で状態を失い、承認の失効と再開の扱いが複雑になる。管理画面タブに置けば、タブの寿命と承認の寿命が一致する。
+- Controller を Offscreen Document に置く: 利用者から見えない場所で処理が続き得るうえ、理由付きの作成が要る。
+- `content_scripts` の宣言: 対象サイトを開くたびに自動で注入され、利用者が開始していないページにもコードが入る。
+- 常設の host permissions: activeTab の一時付与で足りるかを先に実測する（BLUEPRINT §4）。
+- 検証ライブラリ（zod 等）: 依存が増える。メッセージの種類が少ない間は手書きの検証で足りる。
+
+### 受け入れ条件（試験観点）
+
+- 対象ページの判定: 類似ホスト、別スキーム、別ポート、サブドメイン、userinfo、通常の Claude チャット、`/codex` のようなパスの接頭辞一致を拒否する（単体試験）。
+- メッセージ検証: 余分なキー、欠けたキー、別の版・種類、UUID v4 でない実行 ID、整数でない期限、プレーンオブジェクトでない値を拒否する（単体試験）。
+- Content Script: 他の Content Script やタブからの送信、別拡張からの送信、期限切れ、再利用された実行 ID、対応ページ以外での実行を拒否する（単体試験）。
+- Controller: 対象タブなし、対応外のページ、URL を読めないタブ、注入の失敗、応答の不一致をそれぞれ区別して報告し、接続済みにしない（単体試験）。
+- ビルド成果物: 上記 9 の検査が CI で通り、違反を入れると失敗する（検査の単体試験）。
+- AT17・AT27・AT31 の Chrome 上での統合試験（Playwright）は、本 Proposal の範囲外とし、後続の PR で行う。それまでこれらの試験を合格扱いにしない。
+
+Firing rate: unmeasurable before implementation (対象ページの判定と送信元の検証は実ブラウザーの実入力がまだない; Playwright の統合試験と所有者の実画面確認で、対象ページで注入が成立した割合と拒否の発生を測定できる)
