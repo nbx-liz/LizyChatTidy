@@ -20,7 +20,8 @@ export function providerForUrl(rawUrl: string): Provider | null {
     return null;
   }
   const url = new URL(rawUrl);
-  if (url.username !== "" || url.password !== "") {
+  // blob: and similar URLs inherit their creator's origin, so check the scheme first.
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") {
     return null;
   }
   if (url.origin === PROVIDER_ORIGINS.chatgpt) {

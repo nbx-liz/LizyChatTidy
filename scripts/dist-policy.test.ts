@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkHtml, checkManifest, checkScripts } from "./dist-policy.mjs";
+import { checkCsp, checkHtml, checkManifest, checkScripts } from "./dist-policy.mjs";
 
 const shipped = JSON.parse(readFileSync("public/manifest.json", "utf8"));
+const shippedCsp: string = shipped.content_security_policy.extension_pages;
 
 describe("checkManifest", () => {
   it("passes the shipped manifest", () => {
@@ -12,6 +13,7 @@ describe("checkManifest", () => {
   it.each([
     ["a broad permission", { ...shipped, permissions: ["activeTab", "tabs"] }],
     ["the cookies permission", { ...shipped, permissions: ["cookies"] }],
+    ["storage before DEV08", { ...shipped, permissions: ["activeTab", "scripting", "storage"] }],
     ["host permissions", { ...shipped, host_permissions: ["https://chatgpt.com/*"] }],
     ["declared content scripts", { ...shipped, content_scripts: [] }],
     ["web accessible resources", { ...shipped, web_accessible_resources: [] }],
@@ -21,13 +23,7 @@ describe("checkManifest", () => {
       { ...shipped, background: { service_worker: "sw.js", type: "module" } },
     ],
     ["manifest v2", { ...shipped, manifest_version: 2 }],
-    [
-      "a CSP allowing network",
-      {
-        ...shipped,
-        content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'" },
-      },
-    ],
+    ["a missing CSP", { ...shipped, content_security_policy: {} }],
   ])("flags %s", (_label, manifest) => {
     expect(checkManifest(manifest).length).toBeGreaterThan(0);
   });
@@ -37,17 +33,50 @@ describe("checkManifest", () => {
   });
 });
 
-describe("checkHtml", () => {
-  it("allows relative bundled references", () => {
-    expect(checkHtml("app.html", '<script src="./assets/app.js"></script>')).toEqual([]);
+describe("checkCsp", () => {
+  it("passes the shipped policy", () => {
+    expect(checkCsp(shippedCsp)).toEqual([]);
   });
 
   it.each([
-    '<script src="https://cdn.example/x.js"></script>',
-    '<link href="//fonts.example/x.css">',
-    "<img src='data:image/png;base64,AAAA'>",
-  ])("flags %s", (html) => {
-    expect(checkHtml("app.html", html)).toHaveLength(1);
+    ["an earlier permissive connect-src", `connect-src https:; ${shippedCsp}`],
+    ["a repeated directive with the same value", `${shippedCsp}; connect-src 'none'`],
+    [
+      "a widened connect-src",
+      shippedCsp.replace("connect-src 'none'", "connect-src 'none' https:"),
+    ],
+    ["a remote script source", shippedCsp.replace("script-src 'self'", "script-src 'self' https:")],
+    ["a missing frame-src", shippedCsp.replace("frame-src 'none';", "")],
+    ["a missing default-src", shippedCsp.replace("default-src 'self';", "")],
+  ])("flags %s", (_label, policy) => {
+    expect(checkCsp(policy).length).toBeGreaterThan(0);
+  });
+
+  it("flags a non-string policy", () => {
+    expect(checkCsp(undefined)).toEqual(["content_security_policy.extension_pages is missing"]);
+  });
+});
+
+describe("checkHtml", () => {
+  it.each([
+    '<script type="module" crossorigin src="./assets/app.js"></script>',
+    "<link rel=stylesheet href=assets/app.css>",
+    '<img srcset="./a.png 1x, ./b.png 2x">',
+  ])("allows bundled references: %s", (html) => {
+    expect(checkHtml("app.html", html)).toEqual([]);
+  });
+
+  it.each([
+    ["an absolute URL", '<script src="https://cdn.example/x.js"></script>'],
+    ["an unquoted absolute URL", "<script src=https://evil.example/x.js></script>"],
+    ["a protocol-relative URL", '<link href="//fonts.example/x.css">'],
+    ["a backslash host", '<link href="\\\\evil.example/x.css">'],
+    ["a data URL", "<img src='data:image/png;base64,AAAA'>"],
+    ["a character reference", '<img src="&#104;ttps://evil.example/x">'],
+    ["an external srcset candidate", '<img srcset="./a.png 1x, https://evil.example/b.png 2x">'],
+    ["an uppercase attribute", '<SCRIPT SRC="https://evil.example/x.js"></SCRIPT>'],
+  ])("flags %s", (_label, html) => {
+    expect(checkHtml("app.html", html).length).toBeGreaterThan(0);
   });
 });
 
@@ -58,6 +87,11 @@ describe("checkScripts", () => {
     expect(checkScripts(ok)).toEqual([]);
   });
 
+  it("does not mistake property access or identifiers for imports", () => {
+    const source = "obj.import(x); const importantValue = 1; reimport();";
+    expect(checkScripts({ ...ok, "sw.js": source })).toEqual([]);
+  });
+
   it.each([
     ["MAIN world in the app bundle", { ...ok, "assets/app.js": 'inject({world:"MAIN"})' }],
     [
@@ -66,7 +100,10 @@ describe("checkScripts", () => {
     ],
     ["an external listener", { ...ok, "assets/app.js": "chrome.runtime.onMessageExternal" }],
     ["a static import in the content script", { ...ok, "content.js": 'import "./x.js";' }],
+    ["a static import after a statement", { ...ok, "sw.js": 'start();import "./dependency.js";' }],
+    ["a named import mid-line", { ...ok, "sw.js": 'x(); import { a } from "./a.js";' }],
     ["a dynamic import in the service worker", { ...ok, "sw.js": 'import("./x.js")' }],
+    ["import.meta", { ...ok, "content.js": "const u = import.meta.url;" }],
     ["a missing content script", { "sw.js": "x();" }],
   ])("flags %s", (_label, files) => {
     expect(checkScripts(files).length).toBeGreaterThan(0);
