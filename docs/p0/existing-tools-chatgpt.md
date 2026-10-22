@@ -176,3 +176,25 @@ PowerShell ツール（cdh290718-oss）は Windows UI Automation で Chrome の�
 - stevenmorano 方式（拡張ページから chatgpt.com へ cookie 付きで fetch）と Jozef の isolated world での fetch フックが、実際に動くかどうか。
 - `chatgpt-account-id` ヘッダの要否（個人アカウントとワークスペースアカウントの違い）。
 - EvilIrving が試すプロジェクト削除用エンドポイント（`/backend-api/gizmos|projects/{id}`）が実在するか。
+
+## 参照したソースの版
+
+本メモの `パス:行` は、次の commit（2026-10-22 時点の default branch の HEAD。いずれも最終 commit が調査日より前のため、調査時に読んだ版と同じ）を指す。
+
+| リポジトリ | commit | commit 日時 (UTC) |
+| --- | --- | --- |
+| github.com/EvilIrving/chatgpt-bulk-delete | `6ad238c96397819a36bbe81d99b760b7698fd657` | 2026-09-14T08:46:56Z |
+| github.com/JozefJarosciak/chatgpt-mass-delete-export | `682493bb1405ef1e6db6af5b24f74212dc50710c` | 2025-11-04T16:37:23Z |
+| github.com/Junyi-99/chatgpt-bulk-delete-export | `96710f1c6d38920fde7141ff1fbff4198943194b` | 2026-08-06T16:22:20Z |
+| github.com/Masahiro-kokoro/chatgpt-bulk-deleter | `7f78afe7b83a29cb7e68732e74f6e793cce48fd2` | 2026-02-06T05:05:51Z |
+| github.com/PNP-MA/GPTbulkDeleter | `e86a902f47c97287a4b3a0974857e387ae8c9974` | 2026-06-27T09:21:25Z |
+| github.com/cdh290718-oss/chatgpt-bulk-delete-powershell | `50057de94a52ae7a9292b8692b42296d9eb70899` | 2026-10-08T05:45:41Z |
+| github.com/fineanmol/chatgpt-bulk-delete-manager | `b993a0fc84a2b0ea3de8fe58e929ba84327e3f5a` | 2026-06-30T23:40:01Z |
+| github.com/joysey/chatgpt-bulk-delete | `e8b15acd2a6445bb80b59c844cd47133b39bf1f0` | 2025-07-04T07:15:42Z |
+| github.com/kevin-lynch/chatgpt-bulk-delete | `1fef9e23d16fb3d7c5eff89a3cfc4e72e32b1ee8` | 2026-04-30T18:09:29Z |
+| github.com/learnerLj/ai-chat-bulk-manager | `1f141dbc55cd8ad3dd70bfa94c60170bbd271b07` | 2026-09-30T14:40:06Z |
+| github.com/mostermas/ChatGPTBulkDelete | `8aa1477a0bf929b3755c8e8daea47570d6e141da` | 2026-05-20T10:50:11Z |
+| github.com/qcrao/bulk-delete-chatGPT | `cbf29c07445f64d8d8d29aecef1ecb5509f58a8e` | 2026-10-13T15:20:02Z |
+| github.com/stevenmorano/ce-chatgpt-bulk-delete | `729106a19c55fb46543d91fb9dce6a7010353e46` | 2026-06-29T19:36:29Z |
+| github.com/saeedezzati/superpower-chatgpt | `d10a491cd1e45104ee31b8c43816dafb2ccd4ed4` | 2024-06-18T22:16:25Z |
+| github.com/willnjohnson/ChatGPTBulkDeleter | `b00a81ede30236a378553942ae3d0c42bdc12716` | 2025-07-18T02:42:49Z |

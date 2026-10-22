@@ -170,3 +170,12 @@ A と B は同じ beta 値 `ccr-byoc-2025-07-29` を使う。ホスト（claude.
 - Redact の内部方式（埋め込みブラウザか、cookie の扱い、どのエンドポイントか）。
 - "GPT Cleaner — bulk delete ChatGPT and Claude conversations"（`geeffnkijdkakkebnfionlnpphklplka`）と "AI Chat Delete"（`genlcmjjklkkmclbgfbpagmehcnaphbo`）。ストアページを取得できなかったか、未取得。
 - Managed Agents の `/v1/sessions` と claude.ai/code の CCR セッションが同じバックエンドかどうか。
+
+## 参照したソースの版
+
+本メモの `パス:行` は、次の commit（2026-10-22 時点の default branch の HEAD。いずれも最終 commit が調査日より前のため、調査時に読んだ版と同じ）を指す。
+
+| リポジトリ | commit | commit 日時 (UTC) |
+| --- | --- | --- |
+| github.com/MatteoLeonesi/bulk-delete-claude-chat | `0576636c13597ea508f432803810996fd9004b84` | 2026-06-13T14:31:06Z |
+| github.com/kayuling/chat-organizer-extension | `be2a58e89056df1161db234ff9fbb3bb70918193` | 2026-03-05T09:07:26Z |
