@@ -24,19 +24,6 @@ export const REQUIRED_CSP = Object.freeze({
   "frame-src": "'none'",
 });
 
-const URL_ATTRIBUTES = new Set([
-  "src",
-  "href",
-  "srcset",
-  "action",
-  "formaction",
-  "poster",
-  "data",
-  "xlink:href",
-]);
-
-const EXTENSION_BASE = "chrome-extension://lizychattidy-check/app.html";
-
 /** Returns a list of violations; an empty list means the manifest passes. */
 export function checkManifest(manifest) {
   if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
@@ -72,16 +59,21 @@ export function checkManifest(manifest) {
 /**
  * Parses the policy the way browsers do: a repeated directive is ignored
  * after its first occurrence, so duplicates are rejected outright and the
- * required directives must carry exactly the expected value.
+ * required directives must carry exactly the expected value. Fails closed on
+ * any character outside printable ASCII, since CSP only separates tokens with
+ * ASCII whitespace and a look-alike space would hide a directive.
  */
 export function checkCsp(policy) {
   if (typeof policy !== "string") {
     return ["content_security_policy.extension_pages is missing"];
   }
+  if (/[^\x20-\x7E]/.test(policy)) {
+    return ["CSP contains characters outside printable ASCII"];
+  }
   const problems = [];
   const seen = new Map();
   for (const raw of policy.split(";")) {
-    const tokens = raw.trim().split(/\s+/).filter(Boolean);
+    const tokens = raw.split(" ").filter((token) => token !== "");
     if (tokens.length === 0) {
       continue;
     }
@@ -102,53 +94,26 @@ export function checkCsp(policy) {
   return problems;
 }
 
+// Substrings that no bundled-only page needs anywhere in its markup.
+const FORBIDDEN_HTML_FRAGMENTS = Object.freeze([
+  [":", "a scheme or other colon"],
+  ["//", "a protocol-relative reference"],
+  ["\\", "a backslash"],
+  ["&", "a character reference"],
+]);
+
 /**
- * HTML pages may only reference resources bundled in the extension. Attribute
- * values are read quoted or unquoted; values containing character references
- * are rejected rather than decoded, and every URL is resolved against an
- * extension base so `//host`, backslashes and schemes are all caught.
+ * HTML pages may only reference resources bundled in the extension. Rather
+ * than parse HTML (attribute spellings, separators and URL-list attributes
+ * form an open grammar), the check fails closed over the whole document: a
+ * page that only references relative, bundled paths contains none of the
+ * forbidden fragments, so any occurrence is reported.
  */
 export function checkHtml(name, html) {
-  const problems = [];
-  const attributes = html.matchAll(
-    /\s([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g,
+  const body = html.replace(/^\s*<!doctype html>/i, "");
+  return FORBIDDEN_HTML_FRAGMENTS.filter(([fragment]) => body.includes(fragment)).map(
+    ([, label]) => `${name}: contains ${label}`,
   );
-  for (const match of attributes) {
-    const attribute = match[1].toLowerCase();
-    if (!URL_ATTRIBUTES.has(attribute)) {
-      continue;
-    }
-    const value = match[2] ?? match[3] ?? match[4] ?? "";
-    if (value.includes("&")) {
-      problems.push(`${name}: character reference in ${attribute} is not allowed`);
-      continue;
-    }
-    // Browsers treat a backslash like a slash in standard URLs; do not rely on
-    // how the chrome-extension: scheme is classified.
-    if (value.includes("\\")) {
-      problems.push(`${name}: backslash in ${attribute} is not allowed`);
-      continue;
-    }
-    const candidates =
-      attribute === "srcset"
-        ? value.split(",").map((part) => part.trim().split(/\s+/)[0])
-        : [value];
-    for (const candidate of candidates) {
-      if (!isBundledReference(candidate ?? "")) {
-        problems.push(`${name}: external reference in ${attribute}: ${candidate}`);
-      }
-    }
-  }
-  return problems;
-}
-
-function isBundledReference(reference) {
-  if (!URL.canParse(reference, EXTENSION_BASE)) {
-    return false;
-  }
-  const base = new URL(EXTENSION_BASE);
-  const resolved = new URL(reference, EXTENSION_BASE);
-  return resolved.protocol === base.protocol && resolved.host === base.host;
 }
 
 /**
@@ -172,9 +137,9 @@ export function checkScripts(files) {
       problems.push(`${name}: missing`);
       continue;
     }
-    // Any `import` keyword use outside property access: static imports
-    // anywhere in the file, dynamic import() and import.meta.
-    if (/(?:^|[^\w$.])import(?:\s|[*{("'`.]|$)/m.test(source)) {
+    // Fail closed: any `import` token that is not part of a longer identifier
+    // or a property access, whatever follows it (spaces, comments, strings).
+    if (/(?:^|[^\w$.])import(?![\w$])/m.test(source)) {
       problems.push(`${name}: must not import modules`);
     }
   }

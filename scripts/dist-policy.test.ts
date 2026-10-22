@@ -48,6 +48,13 @@ describe("checkCsp", () => {
     ["a remote script source", shippedCsp.replace("script-src 'self'", "script-src 'self' https:")],
     ["a missing frame-src", shippedCsp.replace("frame-src 'none';", "")],
     ["a missing default-src", shippedCsp.replace("default-src 'self';", "")],
+    [
+      "a no-break space hiding directives",
+      shippedCsp
+        .replace("default-src 'self'", "default-src 'self'")
+        .replace("connect-src 'none'", "connect-src 'none'"),
+    ],
+    ["a tab separator", shippedCsp.replace("connect-src 'none'", "connect-src\t'none'")],
   ])("flags %s", (_label, policy) => {
     expect(checkCsp(policy).length).toBeGreaterThan(0);
   });
@@ -75,8 +82,28 @@ describe("checkHtml", () => {
     ["a character reference", '<img src="&#104;ttps://evil.example/x">'],
     ["an external srcset candidate", '<img srcset="./a.png 1x, https://evil.example/b.png 2x">'],
     ["an uppercase attribute", '<SCRIPT SRC="https://evil.example/x.js"></SCRIPT>'],
+    ["a legacy background attribute", '<body background="https://evil.example/i.png">'],
+    [
+      "a preload imagesrcset",
+      '<link rel="preload" as="image" imagesrcset="https://evil.example/i.png 1x">',
+    ],
+    ["an attribute after a slash", "<img/src=https://evil.example/image.png>"],
+    ["a reference after a quoted >", '<img alt=">" src=https://evil.example/i.png>'],
+    ["a CSS url in a style attribute", '<div style="background:url(//evil.example/i.png)">'],
   ])("flags %s", (_label, html) => {
     expect(checkHtml("app.html", html).length).toBeGreaterThan(0);
+  });
+
+  it("passes the shape of the generated page", () => {
+    const page = [
+      "<!doctype html>",
+      '<html lang="ja"><head><meta charset="utf-8" />',
+      '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+      "<title>LizyChatTidy</title>",
+      '<script type="module" crossorigin src="./assets/app-DyBPr7AH.js"></script>',
+      '</head><body><div id="root"></div></body></html>',
+    ].join("\n");
+    expect(checkHtml("app.html", page)).toEqual([]);
   });
 });
 
@@ -104,6 +131,15 @@ describe("checkScripts", () => {
     ["a named import mid-line", { ...ok, "sw.js": 'x(); import { a } from "./a.js";' }],
     ["a dynamic import in the service worker", { ...ok, "sw.js": 'import("./x.js")' }],
     ["import.meta", { ...ok, "content.js": "const u = import.meta.url;" }],
+    [
+      "a static import followed by a comment",
+      { ...ok, "sw.js": 'start();import/* comment */"./dependency.js";' },
+    ],
+    [
+      "a dynamic import followed by a comment",
+      { ...ok, "sw.js": 'const p = import/* comment */("./dependency.js");' },
+    ],
+    ["an import followed by a line comment", { ...ok, "content.js": 'import// c\n"./x.js";' }],
     ["a missing content script", { "sw.js": "x();" }],
   ])("flags %s", (_label, files) => {
     expect(checkScripts(files).length).toBeGreaterThan(0);
