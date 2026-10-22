@@ -20,14 +20,25 @@ export const FORBIDDEN_MANIFEST_KEYS = Object.freeze([
   "externally_connectable",
 ]);
 
-// Effective values required for these CSP directives (each must appear once).
-export const REQUIRED_CSP = Object.freeze({
+// The complete extension-page policy, directive by directive. Any other
+// directive, a missing one or a different value is a violation, so widening
+// e.g. img-src is caught as well as connect-src.
+export const EXPECTED_CSP = Object.freeze({
   "default-src": "'self'",
   "script-src": "'self'",
   "object-src": "'none'",
+  "base-uri": "'none'",
   "connect-src": "'none'",
   "frame-src": "'none'",
+  "img-src": "'self'",
+  "font-src": "'self'",
+  "form-action": "'none'",
 });
+
+// Built files are classified by extension. Scripts are inspected; markup is
+// inspected; anything the checker cannot inspect is a violation.
+const SCRIPT_EXTENSIONS = Object.freeze([".js", ".mjs", ".cjs"]);
+const INERT_EXTENSIONS = Object.freeze([".css"]);
 
 /** Returns a list of violations; an empty list means the manifest passes. */
 export function checkManifest(manifest) {
@@ -89,14 +100,45 @@ export function checkCsp(policy) {
     }
     seen.set(name, tokens.slice(1).join(" "));
   }
-  for (const [name, expected] of Object.entries(REQUIRED_CSP)) {
+  for (const [name, expected] of Object.entries(EXPECTED_CSP)) {
     if (!seen.has(name)) {
       problems.push(`CSP directive missing: ${name}`);
     } else if (seen.get(name) !== expected) {
       problems.push(`CSP directive ${name} must be exactly ${expected}`);
     }
   }
+  for (const name of seen.keys()) {
+    if (!Object.hasOwn(EXPECTED_CSP, name)) {
+      problems.push(`CSP directive not allowed: ${name}`);
+    }
+  }
   return problems;
+}
+
+/**
+ * Sorts built files (paths relative to dist/) into what each check reads.
+ * `manifest.json` is checked separately; any other file whose type the
+ * checker cannot inspect, such as WebAssembly or an unknown extension, is a
+ * violation rather than being skipped.
+ */
+export function classifyFiles(paths) {
+  const html = [];
+  const scripts = [];
+  const problems = [];
+  for (const path of paths) {
+    const lower = path.toLowerCase();
+    if (lower === "manifest.json") {
+      continue;
+    }
+    if (lower.endsWith(".html")) {
+      html.push(path);
+    } else if (SCRIPT_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+      scripts.push(path);
+    } else if (!INERT_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+      problems.push(`${path}: file type is not inspectable by the dist checker`);
+    }
+  }
+  return { html, scripts, problems };
 }
 
 // Substrings that no bundled-only page needs anywhere in its markup.

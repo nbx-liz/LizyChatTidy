@@ -1,7 +1,7 @@
 // Verifies the built extension in dist/ (P-0004). Exits non-zero on any violation.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { checkHtml, checkManifest, checkScripts } from "./dist-policy.mjs";
+import { checkHtml, checkManifest, checkScripts, classifyFiles } from "./dist-policy.mjs";
 
 const DIST = "dist";
 
@@ -24,14 +24,14 @@ const files = walk(DIST).map((path) => relative(DIST, path).split("\\").join("/"
 if (!files.includes("app.html")) {
   problems.push("app.html: missing");
 }
+const classified = classifyFiles(files);
+problems.push(...classified.problems);
+for (const file of classified.html) {
+  problems.push(...checkHtml(file, readFileSync(join(DIST, file), "utf8")));
+}
 const scripts = {};
-for (const file of files) {
-  const text = readFileSync(join(DIST, file), "utf8");
-  if (file.endsWith(".html")) {
-    problems.push(...checkHtml(file, text));
-  } else if (file.endsWith(".js")) {
-    scripts[file] = text;
-  }
+for (const file of classified.scripts) {
+  scripts[file] = readFileSync(join(DIST, file), "utf8");
 }
 problems.push(...checkScripts(scripts));
 

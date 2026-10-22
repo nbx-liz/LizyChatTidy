@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkCsp, checkHtml, checkManifest, checkScripts } from "./dist-policy.mjs";
+import { checkCsp, checkHtml, checkManifest, checkScripts, classifyFiles } from "./dist-policy.mjs";
 
 const shipped = JSON.parse(readFileSync("public/manifest.json", "utf8"));
 const shippedCsp: string = shipped.content_security_policy.extension_pages;
@@ -55,6 +55,11 @@ describe("checkCsp", () => {
         .replace("connect-src 'none'", "connect-src 'none'"),
     ],
     ["a tab separator", shippedCsp.replace("connect-src 'none'", "connect-src\t'none'")],
+    ["a widened img-src", shippedCsp.replace("img-src 'self'", "img-src 'self' https:")],
+    ["a widened font-src", shippedCsp.replace("font-src 'self'", "font-src 'self' data:")],
+    ["a missing base-uri", shippedCsp.replace("base-uri 'none';", "")],
+    ["an extra style-src", `${shippedCsp}; style-src 'self' https:`],
+    ["an extra media-src", `${shippedCsp}; media-src https:`],
   ])("flags %s", (_label, policy) => {
     expect(checkCsp(policy).length).toBeGreaterThan(0);
   });
@@ -109,6 +114,44 @@ describe("checkHtml", () => {
       '</head><body><div id="root"></div></body></html>',
     ].join("\n");
     expect(checkHtml("app.html", page)).toEqual([]);
+  });
+});
+
+describe("classifyFiles", () => {
+  it("sorts the current build output with no problems", () => {
+    const result = classifyFiles([
+      "manifest.json",
+      "app.html",
+      "assets/app-DyBPr7AH.js",
+      "content.js",
+      "sw.js",
+    ]);
+    expect(result).toEqual({
+      html: ["app.html"],
+      scripts: ["assets/app-DyBPr7AH.js", "content.js", "sw.js"],
+      problems: [],
+    });
+  });
+
+  it("inspects .mjs and .cjs bundles as scripts", () => {
+    expect(classifyFiles(["assets/app-1.mjs", "assets/x.CJS"]).scripts).toEqual([
+      "assets/app-1.mjs",
+      "assets/x.CJS",
+    ]);
+  });
+
+  it("accepts stylesheets without inspection", () => {
+    expect(classifyFiles(["assets/app.css"]).problems).toEqual([]);
+  });
+
+  it.each([
+    "assets/app.wasm",
+    "assets/logo.svg",
+    "assets/data.json",
+    "assets/LICENSE",
+    "assets/app.js.map",
+  ])("flags a file it cannot inspect: %s", (path) => {
+    expect(classifyFiles([path]).problems).toHaveLength(1);
   });
 });
 
