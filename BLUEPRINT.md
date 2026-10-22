@@ -12,8 +12,8 @@
 
 | 対象 | 扱い |
 | --- | --- |
-| ChatGPT の Web 会話 | 対象。対応プラン・個人/組織ワークスペースは DEV01〜03 の検証結果で限定する。 |
-| Claude Code on the web | 対象。claude.ai/code のクラウドセッション [S02]。 |
+| ChatGPT の Web 会話 | 対象。個人アカウント（Plus/Pro）の個人ワークスペースだけ。組織ワークスペースは対象外（D-0002）。 |
+| Claude Code on the web | 対象。claude.ai/code のクラウドセッション [S02]。Max プラン（Consumer Terms）の組織だけ（D-0001 からの導出。D-0002 に記録）。 |
 | 通常の Claude Web チャット | 対象外。Claude Code のセッションと混同しない（AT01）。 |
 | ローカル JSONL・CLI 履歴 | 対象外。Agent SDK や Native Messaging を必須にしない。 |
 | アカウント削除・全削除 | 対象外。会話単位の対象 ID に限定する。 |
