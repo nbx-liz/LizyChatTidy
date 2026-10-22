@@ -219,10 +219,10 @@ Firing rate: unmeasurable before implementation (内部 API の Adapter も実�
 
 状態: 決定
 
-handoff が ADR として残すとした「対象プラン」「言語」の判断を記録する。詳細の表は `docs/p0/DEV01-scope.md`。
+handoff が ADR として残すとした「対象プラン」「言語」の判断を記録する。詳細の表は `docs/p0/DEV01-scope.md`。所有者の回答（2026-10-22）は ChatGPT の範囲、対応環境、UI 言語、進め方であり、Claude 側の限定は下記のとおり D-0001 からの導出である。
 
 - ChatGPT: 所有者の個人アカウント（Plus または Pro）の個人ワークスペースだけを対象にする。組織ワークスペース（Team / Business / Enterprise / Edu）は対象外とし、主体を個人ワークスペースと確認できない場合は自動削除を無効にする。
-- Claude Code on the web: 所有者の Max プラン（Consumer Terms）の組織だけを対象にする。Team / Enterprise の組織は対象外。
+- Claude Code on the web: 所有者の Max プラン（Consumer Terms）の組織だけを対象にする。Team / Enterprise の組織は対象外。この項目は所有者に直接確認したものではなく、D-0001 の「Claude Max（Consumer Terms）」から導出した。Team / Enterprise には Commercial Terms が適用され（S13、`docs/p0/DEV02-evidence.md` §4.3）、P-0003 で受容した規約リスクの評価範囲の外にある。
 - 対応環境の目標: Google Chrome 安定版の Windows、macOS、Linux。検証状態は DEV13 で記録し、実測前に対応済みとは宣言しない。
 - UI 言語: サービス側は日本語 UI を検証の前提にする。拡張の表示は日本語。削除の判定は UI 文言に依存させない（P-0003）。
 - 進め方: DEV01 → DEV04（拡張の雛形）→ DEV03（合成データでの Adapter PoC と実画面検証の手順書）の順に進め、所有者による実画面検証の手前で止める。

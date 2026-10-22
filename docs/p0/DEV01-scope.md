@@ -8,8 +8,8 @@
 | --- | --- | --- | --- |
 | ChatGPT の Web 会話（chatgpt.com） | 対象 | 所有者の個人アカウント（Plus または Pro）の個人ワークスペースだけ。 | D-0001, D-0002 |
 | ChatGPT の組織ワークスペース（Team / Business / Enterprise / Edu） | 対象外 | 組織ワークスペースが選択中、または主体を個人ワークスペースと確認できない場合、自動削除を無効にし閲覧に留める（INV-06, AT02）。 | D-0002 |
-| Claude Code on the web（claude.ai/code のクラウドセッション） | 対象 | 所有者の Max プラン（Consumer Terms）の組織だけ。Team / Enterprise の組織は Consumer Terms の範囲外のため対象外とし、選択中の組織を Max の組織と確認できない場合は自動削除を無効にする。 | D-0002 |
-| Claude の Team / Enterprise 組織 | 対象外 | 同上。 | D-0002 |
+| Claude Code on the web（claude.ai/code のクラウドセッション） | 対象 | 所有者の Max プラン（Consumer Terms）の組織だけ。選択中の組織を Max の組織と確認できない場合は自動削除を無効にする。この限定は所有者に直接確認したものではなく、D-0001 の「Claude Max（Consumer Terms）」からの導出である。 | D-0001 からの導出（D-0002 に記録） |
+| Claude の Team / Enterprise 組織 | 対象外 | Team / Enterprise には Consumer Terms ではなく Commercial Terms が適用され（S13）、P-0003 で所有者が受容した規約リスクの評価範囲（Consumer Terms）の外にあるため。 | `docs/p0/DEV02-evidence.md` §4.2–4.3（S13）、D-0001 からの導出 |
 | 通常の Claude Web チャット（claude.ai の Chats） | 対象外 | Claude Code のセッションと区別し、取り込み・削除の対象にしない（AT01）。 | BLUEPRINT §1 |
 | Claude の Cowork タスク | 対象外 | "Chats and tasks" の tasks は Cowork タスクと推定される（`docs/p0/existing-tools-claude.md`）。Claude Code のセッションと混同しない。 | 同左 |
 | ChatGPT / Claude のデスクトップ・モバイルアプリ | 対象外 | 拡張はブラウザーの Web 版だけで動く。 | BLUEPRINT §1 |
@@ -20,13 +20,13 @@
 
 内部 API の一覧が各種類を含むかは未検証であり、DEV03 で確認する。確認できない種類は「取得範囲外」として表示し、全件扱いしない（INV-14, AT03）。
 
-| サービス | 種類 | 扱い | 検証 |
+| サービス | 種類 | 扱い | 検証・根拠 |
 | --- | --- | --- | --- |
 | ChatGPT | 通常の会話 | 対象 | DEV03 |
 | ChatGPT | アーカイブ済みの会話 | 対象（網羅性を確認できた場合） | DEV03 |
 | ChatGPT | プロジェクト内の会話 | 対象（網羅性を確認できた場合） | DEV03 |
-| ChatGPT | 一時チャット | 対象外（保存されない） | — |
-| ChatGPT | 共有リンク・GPT・メモリ | 対象外 | — |
+| ChatGPT | 一時チャット | 対象外（範囲の決定）。履歴に表示されないとされる（サービス側で最大 30 日保持され得るとの記述あり。検索スニペットのみで未検証）。 | `docs/p0/alt-methods.md` Q4 |
+| ChatGPT | 共有リンク・GPT・メモリ | 対象外（範囲の決定）。会話単位の削除だけを行う。 | BLUEPRINT §1 |
 | Claude Code on the web | 稼働していないセッション | 対象 | DEV03 |
 | Claude Code on the web | アーカイブ済みのセッション | 対象（網羅性を確認できた場合）。アーカイブ済みを停止中の証拠にしない（BLUEPRINT §7）。 | DEV03 |
 | Claude Code on the web | 実行中・稼働状態不明のセッション | 削除対象から除外（AT20） | DEV03 |
@@ -60,6 +60,11 @@
 7. Cookie だけで動く ChatGPT のエンドポイントの有無（見つかれば INV-02 の例外を取り除く）。
 8. 公式エクスポートに Claude Code のクラウドセッションが含まれるか。
 9. 対応する Chrome の最小版と、activeTab の一時付与の持続範囲。
+10. 会話 ID・セッション ID が安定して一意か、その正規形式（INV-17 の ID 検証に使う）。
+11. 更新の検出に使える項目と、計画時の fingerprint にそれで十分か（BLUEPRINT §7 の 4。不十分なら自動削除を無効にする）。
+12. 削除結果の独立した証拠の組み合わせ（BLUEPRINT §7「結果の判定」の `verified` の要件）と、再読み込み後の照合で同じ結論になるか。
+13. 要求間隔の値（INV-19。一覧取得・照合を含む）。
+14. 実画面検証（BLUEPRINT §10「検証」の 7 項目）。所有者が使い捨て会話で行い、観測できなかった項目の能力は未検証のまま無効にする。
 
 ## 6. 関連する受け入れ試験
 
