@@ -17,3 +17,25 @@ jobs:
         run: bash scripts/verify-handoff.sh docs/handoff
       - name: Verify the checker rejects tampered bundles
         run: bash scripts/test-verify-handoff.sh
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies (lockfile must be current)
+        run: pnpm install --frozen-lockfile
+      - name: Lint and format (Biome)
+        run: pnpm lint
+      - name: Type check
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Build the extension
+        run: pnpm build
+      - name: Check the built extension (permissions, CSP, injection, listeners)
+        run: pnpm check:dist
