@@ -425,3 +425,83 @@ Gate-category: none
 検索・絞り込みの条件は利用者が指定する分類であり、`unknown` の判定も省略ではなく不一致と断定しないための分類である。再利用（cache）に当たるのは変更内容 5 の索引の再利用だけである。
 
 Firing rate: unmeasurable before implementation (索引の再利用は管理画面の操作の実績がないと測れない; 所有者の取り込みで管理画面を使った時点で、同じ版番号での検索の回数と索引の作成回数の比として測定できる)
+
+## P-0007: KEEP の暗号化保存と KEEP ストアの状態（DEV08）
+
+状態: 提案（2026-11-01）
+
+Gate-category: state-machine, concurrency-ownership, shared-state-invariant
+
+### 目的
+
+KEEP（サービス上に残す会話）の印を、利用者の明示的な同意のもとで端末内に暗号化して保存する（D-0001: P1 で暗号化保存まで実装する）。KEEP の読み取り失敗・破損・鍵不一致・競合を「KEEP なし」と扱わない（INV-05）ための状態と、複数の管理画面タブからの書き込みの順序を決める。P-0001 の変更内容 1（KEEP のキー）を実装する。
+
+### 変更内容
+
+1. **権限**: manifest に `storage` を加える（P-0004 の 6 で DEV08 に先送りしたもの）。`storage.sync` は使わない（INV-01、AT29）。`chrome.storage.local` は既定で Content Script から読めるため、起動時に `setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })` を呼ぶ。この呼び出しが `storage.local` に効くことは Chrome 上で未確認であり、結果（成功・失敗・未対応）を画面に診断として示し、DEV04 の統合試験で確かめる。保存するのは暗号文であり、拡張の Content Script は storage を読まない。
+2. **保存形式**: `chrome.storage.local` の 1 つのキー（`lizychattidy.keep`）に 1 つの封筒（envelope）を置き、書き込みは 1 回の `set` で行う（印とデータを分けて半端に書かれる形を作らない）。封筒の見出しは `format`（`lizychattidy-keep`）、`schemaVersion`（1）、KDF の指定（`PBKDF2`、`SHA-256`、反復回数、16 バイトの salt）、暗号の指定（`AES-GCM`、12 バイトの IV）、`revision` で、本体は暗号文である。見出しの全項目を正規化した JSON を AEAD の追加認証データ（AAD）にする。平文は `{ revision, entries }` で、`revision` は見出しと一致しなければならない。
+3. **保存する内容**: KEEP の要素（`provider`、`conversationId`、`scope`。P-0001）だけ。タイトル・本文・日時は保存しない（INV-03、AT28）。`conversationId` は Adapter の正規形式（ChatGPT は UUID の小文字形式。P-0005）で検証する。`scope` は `null` か `{ accountKey, workspaceKey }`。公式エクスポート由来の会話の KEEP は `scope: null` とする。
+4. **鍵**: 利用者のパスフレーズ（NFC 正規化、12 文字以上）から WebCrypto の PBKDF2-SHA256 で AES-GCM 256 ビットの鍵を導出する。反復回数の既定は 600,000（OWASP の PBKDF2-HMAC-SHA256 の推奨値）とし、読み込み時は 100,000 以上 10,000,000 以下だけを受け付ける（範囲外は `corrupt`）。鍵は取り出し不可（non-extractable）の `CryptoKey` として管理画面のメモリにだけ置き、パスフレーズは導出の後に保持しない。書き込みごとに新しい乱数の IV を使う。Argon2 等は依存を加えることになるため使わない（D-0001）。鍵を暗号文と同じ場所に保存しない。
+5. **状態**: KEEP ストアは次の状態を持つ。BLUEPRINT §5 の 4 状態に `absent` を加える。
+   - `absent`: 封筒がない。利用者の明示的な作成（同意とパスフレーズ）でだけ `available` へ移る。自動では作らない。保存領域全体の消去と初回は区別できないため、画面は「保存先がありません（初回、または消失）」と示す。
+   - `locked`: 封筒があり、構造は正しい。正しいパスフレーズで復号できれば `available`。復号に失敗したら `locked` のまま「パスフレーズが違うか、保存データが壊れています」と示す（AEAD ではこの 2 つを区別できない）。
+   - `available`: 復号済み。`entries` と `revision` を持つ。KEEP の追加・解除ができる。
+   - `corrupt`: 封筒の構造が不正、未知または新しい `schemaVersion`、KDF の範囲外、復号後の平文の構造が不正、`revision` の不一致。上書きせず、利用者による削除だけを許す（AT13、AT14）。
+   - `unavailable`: 保存領域の読み書きの失敗、容量超過、排他の取得の失敗・時間切れ、他のタブによる変更（競合）。理由のコードを持つ。再読み込みで状態を判定し直す（復号済みの鍵は捨てる）。
+   - 遷移: 起動・再読み込み → `absent` / `locked` / `corrupt` / `unavailable`。`absent` →（作成）→ `available`。`locked` →（解錠）→ `available`。`available` →（施錠）→ `locked`。`available` →（書き込みの競合・失敗、他のタブの変更）→ `unavailable`。どの状態からも（削除）→ `absent`（削除の失敗は `unavailable`）。これ以外の操作（`locked` での書き込み、`corrupt` での作成など）は拒否する。
+6. **書き込みの排他**: 書き込みと作成と削除は Web Locks（`navigator.locks`、名前 `lizychattidy-keep`、10 秒で時間切れ）の中で、保存されている封筒を読み直してから行う。保存されている `revision` がメモリの `revision` と一致しなければ書かずに `unavailable`（`conflict`）にする。書き込みは `revision + 1`。`set` が失敗したら `unavailable`（`write-failed`）にし、一部だけ書く・内容を削って書くことをしない。`storage.onChanged` で他のタブの変更を検出したら、自分の書き込みでない限り `unavailable`（`changed-elsewhere`）にする。
+7. **KEEP の判定**: P-0001 の規則（`provider` と `conversationId` の完全一致、`scope` が `null` か主体が一致）を純粋な関数 `isProtected` とし、DEV09 の計画生成と確定直前の確認がこれを使う。
+8. **画面**: 左の列の上部に KEEP ストアの欄（状態の説明、作成・解錠・施錠・削除）を置く。KEEP の付け外しはプレビューの専用ボタン（名前は「KEEP」で固定し、`aria-pressed` で状態を示す）で行い、一覧の行に「KEEP」の文字の印を出す。一覧で Enter はプレビューを開くだけのまま（AT33）。件数「KEEP N 件」を下部に示す。`available` 以外では件数も行の印も出さず「KEEP 未確認」と示す（読めない状態を 0 件と見せない。INV-05）。保存データの削除は確認の段階（チェックと別のボタン、初期フォーカスは取り消し側）を挟み、Enter の連打で確定しない。
+9. **データの消去**（FR11、AT32）: 削除は保存領域のキーを消し、メモリの鍵と印を捨てる。拡張を削除すると `storage.local` も消える。OS 上の完全消去までは保証しない。
+10. **ビルド成果物の検査**: `scripts/dist-policy.mjs` の権限の許可リストに `storage` を加え、拡張のスクリプトに `storage.sync` の参照があれば失敗にする（AT29 の多層防御）。
+
+### 不変条件（試験で確かめる形）
+
+- KINV-1: KEEP ストアが `available` になるのは、構造の正しい封筒を正しい鍵で復号し、平文の構造と `revision` が一致した場合だけである — 読み取りの失敗、未知の版、不正な平文、鍵の不一致のどれかから `available`（空の KEEP を含む）になれば違反。
+- KINV-2: 封筒は `absent` からの明示的な作成でだけ生まれる — 起動時に封筒がないことを理由に作る、または `locked` / `corrupt` / `unavailable` から作成で上書きすれば違反。
+- KINV-3: 書き込みは、排他の中で読み直した `revision` がメモリの値と一致したときだけ行い、`revision` をちょうど 1 増やす — 他のタブが先に書いた後に、古い内容で上書きすれば違反（更新の消失）。
+- KINV-4: `corrupt` の封筒は利用者の削除以外で書き換えない — `corrupt` から KEEP の書き込み・作成が行われれば違反。
+- KINV-5: 保存される平文は `provider` / `conversationId` / `scope` だけを含む — タイトル・本文・日時が平文か見出しに入れば違反。
+- KINV-6: 鍵は取り出し不可で、施錠・削除・競合・再読み込みで捨てられる。パスフレーズは状態に残らない — 施錠の後に書き込みが成功すれば違反。
+- KINV-7: `isProtected` は P-0001 の判定規則に従う — 異なる `provider`・`conversationId` を保護する、主体付きの KEEP が別の主体を保護する、`scope: null` の KEEP が同じ ID を保護しない、のいずれかで違反。
+
+失敗の経路: 正常、例外（WebCrypto・storage の例外）、書き込み途中の停止（1 回の `set` のため、封筒は古いか新しいかのどちらか）、時間切れ（排他）、競合（他のタブ）について試験する。
+
+### 限界（受容する）
+
+- AEAD では、パスフレーズの誤りと暗号文の改ざん・破損を区別できない。どちらも `locked` のまま止まる。
+- 保存領域に古い正しい封筒を書き戻された場合（巻き戻し）は、外部の計数がないため検出できない。
+- 保存領域全体の消去は初回と区別できない。自動作成をしないことで、気付かずに空の KEEP で進むことを防ぐ。
+- パスフレーズを忘れると KEEP は復元できない。削除して作り直すことだけができる。
+- `setAccessLevel` の効果は未確認（変更内容 1）。
+
+いずれも INV-05 を弱めない（どの場合も「KEEP なし」として進まない）。
+
+### 影響範囲
+
+`public/manifest.json`、`scripts/dist-policy.mjs` とその試験、`src/keep/`（新設）、管理画面、BLUEPRINT §4（権限）・§5。
+
+### 互換性
+
+新規。保存データの既存の版はない。将来の版の移行は、旧版を読めること・移行の失敗で KEEP を失ったまま進まないこと（AT14）を条件に、別の Proposal で決める。
+
+### 代替案
+
+- パスフレーズなし（拡張内に鍵を置く）: handoff と BLUEPRINT §5 が求める利用者による解錠と、鍵を暗号文と同じ場所に置かない条件に反する。
+- Argon2 等のメモリハードな KDF: 依存が増える（D-0001）。PBKDF2 の反復回数で補う。
+- KEEP をメモリだけに持つ: D-0001 で退けた。
+- `storage.session`: ブラウザーの終了で消え、KEEP を残せない。
+- IndexedDB: 管理画面のオリジンに置けるが、`storage.local` と同じく端末内の保存であり、拡張の削除時の扱いと容量の扱いが `storage.local` の方が明確である。
+
+### 受け入れ条件（試験観点）
+
+- 状態の各遷移と、許されない遷移の拒否（KINV-1〜4、6）。
+- 2 つの書き手の競合で、後の書き手が書かずに `unavailable` になる。他のタブの変更で `unavailable` になる。排他の時間切れ、`set` の失敗、`get` の失敗、不正な封筒・平文・未知の版・KDF の範囲外のそれぞれ（AT13、AT14）。
+- 誤ったパスフレーズで `locked` のまま。正しいパスフレーズで `available`。鍵が取り出し不可。
+- 合成の取り込みで KEEP を付けた後の保存内容に、タイトル・本文の文字列が現れない（AT28）。
+- 削除の後に `absent` になり、保存領域にキーが残らない（AT32）。
+- `isProtected` の判定（KINV-7、P-0001 の受け入れ条件）。
+- ビルド成果物の検査が `storage` を許し、`storage.sync` の参照を拒否する（AT29）。
+- 実ブラウザーでの操作、`setAccessLevel` の効果、Chrome 同期を有効にしたプロファイルでの確認は DEV04 の統合試験に回し、合格扱いにしない。
+
+追加する条件（パスフレーズの長さ、KDF の範囲、排他の時間切れ）は入力の検証と停止の条件であり、change-gate の 6 つの目的（省く・短くする・再利用する・選ぶ・許す・条件付きで有効にする）に当たらない。
