@@ -1,6 +1,10 @@
 // Branch navigation over an imported conversation tree (P-0001: branches are
 // never concatenated). A branch is identified by the node it ends at; its
 // messages are the path from the root to that node.
+//
+// Everything is computed once per conversation (BranchIndex) and iteratively:
+// the import accepts arbitrarily wide and deep trees, so neither recursion nor
+// spreading a child list into one call may depend on the tree's shape.
 import type { ConversationNode, ConversationRecord } from "../import/types";
 
 export interface Branch {
@@ -9,66 +13,63 @@ export interface Branch {
   readonly nodes: readonly ConversationNode[];
 }
 
-function byId(record: ConversationRecord): Map<string, ConversationNode> {
-  return new Map(record.nodes.map((n) => [n.id, n]));
+export interface BranchIndex {
+  /** Selectable ends: every leaf in tree order, preceded by the current node when it is not a leaf. */
+  readonly ends: readonly string[];
+  /** The branch shown first: the one ending at the current node, else the first leaf. */
+  readonly defaultEnd: string | null;
+  /** True when the current node exists in the tree. */
+  readonly currentKnown: boolean;
+  /** Root-to-`endId` path, or null when the node does not exist. */
+  path(endId: string): Branch | null;
 }
 
-/** Root-to-`endId` path. The import guarantees a consistent forest, so the walk terminates. */
-export function branchEndingAt(record: ConversationRecord, endId: string): Branch | null {
-  const nodes = byId(record);
-  const path: ConversationNode[] = [];
-  let cursor = nodes.get(endId);
-  while (cursor !== undefined) {
-    path.push(cursor);
-    if (path.length > nodes.size) {
-      return null; // Defensive: never loop on a malformed tree.
-    }
-    cursor = cursor.parentId === null ? undefined : nodes.get(cursor.parentId);
-  }
-  return path.length === 0 ? null : { endId, nodes: path.reverse() };
-}
-
-/** Leaf ids in tree order (depth-first, children in their stored order). */
-export function leafIds(record: ConversationRecord): string[] {
-  const nodes = byId(record);
+function leavesInOrder(record: ConversationRecord, nodes: Map<string, ConversationNode>): string[] {
   const out: string[] = [];
-  const stack = record.nodes
-    .filter((n) => n.parentId === null)
-    .map((n) => n.id)
-    .reverse();
+  const stack: string[] = [];
+  const roots = record.nodes.filter((n) => n.parentId === null);
+  for (let i = roots.length - 1; i >= 0; i--) {
+    stack.push((roots[i] as ConversationNode).id);
+  }
   while (stack.length > 0) {
-    const id = stack.pop() as string;
-    const node = nodes.get(id);
+    const node = nodes.get(stack.pop() as string);
     if (node === undefined) {
       continue;
     }
     if (node.childIds.length === 0) {
-      out.push(id);
-    } else {
-      stack.push(...[...node.childIds].reverse());
+      out.push(node.id);
+    }
+    for (let i = node.childIds.length - 1; i >= 0; i--) {
+      stack.push(node.childIds[i] as string);
     }
   }
   return out;
 }
 
-/** The branch shown first: the one ending at the current node, else the first leaf. */
-export function defaultBranchEnd(record: ConversationRecord): string | null {
-  if (record.currentNodeId !== null && record.nodes.some((n) => n.id === record.currentNodeId)) {
-    return record.currentNodeId;
-  }
-  return leafIds(record)[0] ?? null;
-}
-
-/** Selectable branch ends: every leaf, plus the current node when it is not a leaf. */
-export function branchEnds(record: ConversationRecord): string[] {
-  const leaves = leafIds(record);
-  const current = defaultBranchEnd(record);
-  return current !== null && !leaves.includes(current) ? [current, ...leaves] : leaves;
-}
-
-/** Branch ends whose path contains `nodeId` (the node itself or any descendant end). */
-export function branchEndsThrough(record: ConversationRecord, nodeId: string): string[] {
-  return branchEnds(record).filter((end) =>
-    (branchEndingAt(record, end)?.nodes ?? []).some((n) => n.id === nodeId),
-  );
+export function createBranchIndex(record: ConversationRecord): BranchIndex {
+  const nodes = new Map(record.nodes.map((n) => [n.id, n]));
+  const leaves = leavesInOrder(record, nodes);
+  const currentKnown = record.currentNodeId !== null && nodes.has(record.currentNodeId);
+  const defaultEnd = currentKnown ? record.currentNodeId : (leaves[0] ?? null);
+  const currentIsLeaf =
+    currentKnown && (nodes.get(record.currentNodeId as string)?.childIds.length ?? 0) === 0;
+  const ends =
+    currentKnown && !currentIsLeaf ? [record.currentNodeId as string, ...leaves] : leaves;
+  return {
+    ends,
+    defaultEnd,
+    currentKnown,
+    path(endId) {
+      const path: ConversationNode[] = [];
+      let cursor = nodes.get(endId);
+      while (cursor !== undefined) {
+        path.push(cursor);
+        if (path.length > nodes.size) {
+          return null; // Defensive: never loop on a malformed tree.
+        }
+        cursor = cursor.parentId === null ? undefined : nodes.get(cursor.parentId);
+      }
+      return path.length === 0 ? null : { endId, nodes: path.reverse() };
+    },
+  };
 }

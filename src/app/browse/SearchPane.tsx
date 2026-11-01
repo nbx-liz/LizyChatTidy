@@ -8,15 +8,27 @@ export interface SearchForm {
   readonly dateField: DateField;
   readonly from: string;
   readonly to: string;
+  /** The browser's validity.badInput for each date control (its value is then ""). */
+  readonly fromInvalid: boolean;
+  readonly toInvalid: boolean;
   readonly includeUnknownDates: boolean;
   readonly bucket: Bucket;
 }
+
+export type DateError = "invalid" | "reversed" | null;
+
+const DATE_ERRORS: Readonly<Record<Exclude<DateError, null>, string>> = {
+  invalid: "日付が正しくありません。日時の条件は適用していません。",
+  reversed: "開始日が終了日より後です。日時の条件は適用していません。",
+};
 
 export const INITIAL_FORM: SearchForm = {
   text: "",
   dateField: "updatedAt",
   from: "",
   to: "",
+  fromInvalid: false,
+  toInvalid: false,
   includeUnknownDates: false,
   bucket: "match",
 };
@@ -36,12 +48,12 @@ const BUCKET_LABELS: Readonly<Record<Bucket, string>> = {
 export function SearchPane({
   form,
   counts,
-  rangeError,
+  dateError,
   onChange,
 }: {
   readonly form: SearchForm;
   readonly counts: BucketCounts;
-  readonly rangeError: boolean;
+  readonly dateError: DateError;
   readonly onChange: (form: SearchForm) => void;
 }) {
   const ids = {
@@ -103,20 +115,38 @@ export function SearchPane({
           id={ids.from}
           type="date"
           value={form.from}
-          aria-describedby={rangeError ? ids.err : undefined}
-          onChange={(e) => set({ from: e.currentTarget.value })}
+          aria-invalid={form.fromInvalid || dateError === "reversed"}
+          aria-describedby={dateError === null ? undefined : ids.err}
+          // Read validity on change and on blur: an incomplete date may not fire
+          // a change event while its value stays "".
+          onChange={(e) =>
+            set({ from: e.currentTarget.value, fromInvalid: e.currentTarget.validity.badInput })
+          }
+          onBlur={(e) => {
+            if (e.currentTarget.validity.badInput !== form.fromInvalid) {
+              set({ fromInvalid: e.currentTarget.validity.badInput });
+            }
+          }}
         />
         <label htmlFor={ids.to}>終了日</label>
         <input
           id={ids.to}
           type="date"
           value={form.to}
-          aria-describedby={rangeError ? ids.err : undefined}
-          onChange={(e) => set({ to: e.currentTarget.value })}
+          aria-invalid={form.toInvalid || dateError === "reversed"}
+          aria-describedby={dateError === null ? undefined : ids.err}
+          onChange={(e) =>
+            set({ to: e.currentTarget.value, toInvalid: e.currentTarget.validity.badInput })
+          }
+          onBlur={(e) => {
+            if (e.currentTarget.validity.badInput !== form.toInvalid) {
+              set({ toInvalid: e.currentTarget.validity.badInput });
+            }
+          }}
         />
-        {rangeError && (
+        {dateError !== null && (
           <p id={ids.err} className="error" role="alert">
-            開始日が終了日より後です。日時の条件は適用していません。
+            {DATE_ERRORS[dateError]}
           </p>
         )}
         <label className="check">
@@ -127,7 +157,18 @@ export function SearchPane({
           />
           日時不明の会話を表示
         </label>
-        <button type="button" onClick={() => set({ from: "", to: "", includeUnknownDates: false })}>
+        <button
+          type="button"
+          onClick={() =>
+            set({
+              from: "",
+              to: "",
+              fromInvalid: false,
+              toInvalid: false,
+              includeUnknownDates: false,
+            })
+          }
+        >
           日時の条件をクリア
         </button>
       </fieldset>

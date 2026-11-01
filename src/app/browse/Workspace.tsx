@@ -2,7 +2,7 @@ import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { createIndexCache, type SearchHit, type SearchOutcome, search } from "../../browse/search";
 import type { ConversationRecord } from "../../import/types";
 import { ConversationList } from "./ConversationList";
-import { localDayBound } from "./format";
+import { dateCondition } from "./dateCondition";
 import { PreviewPane } from "./PreviewPane";
 import { type Bucket, INITIAL_FORM, type SearchForm, SearchPane } from "./SearchPane";
 
@@ -46,16 +46,19 @@ export function Workspace({
   const listRef = useRef<HTMLDivElement>(null);
   const indexOf = useMemo(() => createIndexCache(), []);
 
-  const fromMs = localDayBound(form.from, "start");
-  const toMs = localDayBound(form.to, "end");
-  const rangeError = fromMs !== null && toMs !== null && fromMs > toMs;
+  // An invalid or reversed range is not applied at all and is shown as an error.
+  const condition = dateCondition(form);
+  const fromMs = condition.status === "active" ? condition.fromMs : null;
+  const toMs = condition.status === "active" ? condition.toMs : null;
+  const dateError =
+    condition.status === "invalid" || condition.status === "reversed" ? condition.status : null;
   const outcome = useMemo(
     () =>
       search(indexOf(records, revision), {
         text: deferredText,
         dateField: form.dateField,
-        fromMs: rangeError ? null : fromMs,
-        toMs: rangeError ? null : toMs,
+        fromMs,
+        toMs,
         includeUnknownDates: form.includeUnknownDates,
       }),
     [
@@ -66,7 +69,6 @@ export function Workspace({
       form.dateField,
       fromMs,
       toMs,
-      rangeError,
       form.includeUnknownDates,
     ],
   );
@@ -74,7 +76,7 @@ export function Workspace({
   const hits = hitsFor(outcome, form.bucket, querying);
   const openHit =
     openId === null ? null : (hits.find((h) => h.record.conversationId === openId) ?? null);
-  const dateActive = !rangeError && (fromMs !== null || toMs !== null);
+  const dateActive = condition.status === "active";
 
   const closePreview = () => {
     setOpenId(null);
@@ -90,7 +92,7 @@ export function Workspace({
           "no-match": outcome.noMatch.length,
           unknown: outcome.unknown.length,
         }}
-        rangeError={rangeError}
+        dateError={dateError}
         onChange={(next) => {
           setForm(next);
           setActiveIndex(null);
@@ -116,6 +118,7 @@ export function Workspace({
             label="会話一覧"
             onActiveChange={setActiveIndex}
             onOpen={(index) => setOpenId(hits[index]?.record.conversationId ?? null)}
+            onEscape={openHit === null ? undefined : closePreview}
           />
         )}
       </section>

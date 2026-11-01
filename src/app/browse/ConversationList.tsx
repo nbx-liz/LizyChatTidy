@@ -93,8 +93,13 @@ export const ConversationList = forwardRef<
     readonly label: string;
     readonly onActiveChange: (index: number | null) => void;
     readonly onOpen: (index: number) => void;
+    /** Closes the preview when one is open (Escape from the list). */
+    readonly onEscape?: (() => void) | undefined;
   }
->(function ConversationList({ hits, activeIndex, field, label, onActiveChange, onOpen }, ref) {
+>(function ConversationList(
+  { hits, activeIndex, field, label, onActiveChange, onOpen, onEscape },
+  ref,
+) {
   const viewport = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(560);
@@ -147,6 +152,9 @@ export const ConversationList = forwardRef<
       // Enter only opens the preview; it never confirms anything (AT33).
       event.preventDefault();
       onOpen(activeIndex);
+    } else if (event.key === "Escape" && onEscape !== undefined) {
+      event.preventDefault();
+      onEscape();
     }
   };
 

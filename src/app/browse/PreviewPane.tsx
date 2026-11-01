@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { branchEndingAt, branchEnds, defaultBranchEnd } from "../../browse/branches";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { type BranchIndex, createBranchIndex } from "../../browse/branches";
 import type { SearchHit } from "../../browse/search";
 import type { ConversationNode, ConversationRecord } from "../../import/types";
 import {
@@ -44,15 +44,15 @@ function MessageItem({ node, matched }: { node: ConversationNode; matched: boole
 }
 
 function branchLabel(
-  record: ConversationRecord,
+  branches: BranchIndex,
   end: string,
   index: number,
-  hit: SearchHit | null,
+  matched: ReadonlySet<string>,
 ) {
-  const current = end === defaultBranchEnd(record) ? "（現在）" : "";
-  const nodes = branchEndingAt(record, end)?.nodes ?? [];
-  const matched = hit !== null && nodes.some((n) => hit.matchedNodeIds.includes(n.id));
-  return `ブランチ ${index + 1}${current}${matched ? "・一致あり" : ""}`;
+  const current = branches.currentKnown && end === branches.defaultEnd ? "（現在）" : "";
+  const hasMatch =
+    matched.size > 0 && (branches.path(end)?.nodes ?? []).some((n) => matched.has(n.id));
+  return `ブランチ ${index + 1}${current}${hasMatch ? "・一致あり" : ""}`;
 }
 
 export function PreviewPane({
@@ -67,12 +67,13 @@ export function PreviewPane({
   const headingId = useId();
   const branchId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const ends = branchEnds(record);
-  const [end, setEnd] = useState<string | null>(() => defaultBranchEnd(record));
-  const branch = end === null ? null : branchEndingAt(record, end);
+  const branches = useMemo(() => createBranchIndex(record), [record]);
+  const matched = useMemo(() => new Set(hit?.matchedNodeIds ?? []), [hit]);
+  const ends = branches.ends;
+  const [end, setEnd] = useState<string | null>(branches.defaultEnd);
+  const branch = end === null ? null : branches.path(end);
   // Structural roots without a message (the export's empty root) are not shown.
   const nodes = (branch?.nodes ?? []).filter((n) => !(n.parentId === null && n.message === null));
-  const currentKnown = record.currentNodeId !== null && end === record.currentNodeId;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -108,13 +109,13 @@ export function PreviewPane({
           <select id={branchId} value={end ?? ""} onChange={(e) => setEnd(e.currentTarget.value)}>
             {ends.map((e, i) => (
               <option key={e} value={e}>
-                {branchLabel(record, e, i, hit)}
+                {branchLabel(branches, e, i, matched)}
               </option>
             ))}
           </select>
         </p>
       )}
-      {ends.length > 0 && !currentKnown && end === defaultBranchEnd(record) && (
+      {ends.length > 0 && !branches.currentKnown && end === branches.defaultEnd && (
         <p className="note">
           現在のブランチを特定できませんでした。最初のブランチを表示しています。
         </p>
@@ -122,11 +123,7 @@ export function PreviewPane({
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: the message region scrolls and must be reachable by keyboard */}
       <ol className="messages" aria-label="メッセージ" tabIndex={0}>
         {nodes.map((node) => (
-          <MessageItem
-            key={node.id}
-            node={node}
-            matched={hit?.matchedNodeIds.includes(node.id) === true}
-          />
+          <MessageItem key={node.id} node={node} matched={matched.has(node.id)} />
         ))}
       </ol>
       {nodes.length === 0 && <p className="note">この会話にはメッセージがありません。</p>}
