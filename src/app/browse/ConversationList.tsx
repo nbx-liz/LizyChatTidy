@@ -13,6 +13,7 @@ import {
   visibleRange,
 } from "../../browse/listNavigation";
 import type { DateField, SearchHit } from "../../browse/search";
+import type { ConversationRecord } from "../../import/types";
 import { coverageLabel, dateLabel, SOURCE_LABEL, titleOf } from "./format";
 
 export const ROW_HEIGHT = 56;
@@ -22,13 +23,14 @@ export function rowDomId(conversationId: string): string {
   return `conversation-${conversationId}`;
 }
 
-function rowLabel(hit: SearchHit, field: DateField): string {
+function rowLabel(hit: SearchHit, field: DateField, kept: boolean): string {
   const r = hit.record;
   return [
     titleOf(r),
     dateLabel(r, field),
     SOURCE_LABEL,
     coverageLabel(r.observation.contentCoverage),
+    ...(kept ? ["KEEP"] : []),
   ]
     .join("、")
     .replace(/[△×] /g, "");
@@ -40,6 +42,7 @@ function Row({
   count,
   active,
   field,
+  kept,
   onPick,
 }: {
   hit: SearchHit;
@@ -47,6 +50,8 @@ function Row({
   count: number;
   active: boolean;
   field: DateField;
+  /** Shown only when the KEEP store is available and the record is protected. */
+  kept: boolean;
   onPick: (index: number) => void;
 }) {
   const r = hit.record;
@@ -60,7 +65,7 @@ function Row({
       aria-selected={active}
       aria-setsize={count}
       aria-posinset={index + 1}
-      aria-label={rowLabel(hit, field)}
+      aria-label={rowLabel(hit, field, kept)}
       className={active ? "row row-active" : "row"}
       style={{ transform: `translateY(${index * ROW_HEIGHT}px)` }}
       onClick={() => onPick(index)}
@@ -74,7 +79,7 @@ function Row({
           {coverageLabel(r.observation.contentCoverage)}
         </span>
       </span>
-      <span className="row-trail" />
+      <span className="row-trail">{kept && <span className="keep-badge">KEEP</span>}</span>
     </div>
   );
 }
@@ -90,6 +95,8 @@ export const ConversationList = forwardRef<
     readonly hits: readonly SearchHit[];
     readonly activeIndex: number | null;
     readonly field: DateField;
+    /** null when KEEP cannot be checked; no badge is shown then (INV-05). */
+    readonly isKept?: ((record: ConversationRecord) => boolean | null) | undefined;
     readonly label: string;
     readonly onActiveChange: (index: number | null) => void;
     readonly onOpen: (index: number) => void;
@@ -97,7 +104,7 @@ export const ConversationList = forwardRef<
     readonly onEscape?: (() => void) | undefined;
   }
 >(function ConversationList(
-  { hits, activeIndex, field, label, onActiveChange, onOpen, onEscape },
+  { hits, activeIndex, field, isKept, label, onActiveChange, onOpen, onEscape },
   ref,
 ) {
   const viewport = useRef<HTMLDivElement>(null);
@@ -186,6 +193,7 @@ export const ConversationList = forwardRef<
                 count={hits.length}
                 active={index === activeIndex}
                 field={field}
+                kept={isKept?.(hit.record) === true}
                 onPick={(i) => {
                   onActiveChange(i);
                   onOpen(i);

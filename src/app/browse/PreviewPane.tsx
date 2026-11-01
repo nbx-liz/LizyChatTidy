@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { type BranchIndex, createBranchIndex } from "../../browse/branches";
 import type { SearchHit } from "../../browse/search";
 import type { ConversationNode, ConversationRecord } from "../../import/types";
+import type { KeepView } from "../keep/keepView";
 import {
   coverageLabel,
   dateLabel,
@@ -53,13 +54,58 @@ function branchLabel(
   return `ブランチ ${index + 1}${current}${matchedEnds.has(end) ? "・一致あり" : ""}`;
 }
 
+/**
+ * KEEP toggle with a fixed accessible name and aria-pressed for its state
+ * (P-0007 item 10). Outside `available` it is focusable but inert and says why.
+ */
+function KeepButton({ record, keep }: { record: ConversationRecord; keep: KeepView }) {
+  const describedBy = useId();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; alert: boolean } | null>(null);
+  const kept = keep.isKept(record);
+  const blocked = keep.blockedReason;
+  return (
+    <span className="keep-toggle">
+      <button
+        type="button"
+        aria-pressed={kept === true}
+        aria-disabled={blocked !== null || busy}
+        aria-describedby={describedBy}
+        onClick={async () => {
+          if (blocked !== null || busy || kept === null) {
+            return;
+          }
+          setBusy(true);
+          const result = await keep.toggle(record, !kept);
+          setBusy(false);
+          setMessage(
+            result === "ok"
+              ? { text: kept ? "KEEP を外しました。" : "KEEP に追加しました。", alert: false }
+              : {
+                  text: "KEEP を更新できませんでした。左のパネルを確認してください。",
+                  alert: true,
+                },
+          );
+        }}
+      >
+        KEEP
+      </button>
+      <span id={describedBy} className="note" role={message?.alert === true ? "alert" : "status"}>
+        {blocked ?? message?.text ?? (kept === true ? "付けています" : "付けていません")}
+      </span>
+    </span>
+  );
+}
+
 export function PreviewPane({
   record,
   hit,
+  keep,
   onClose,
 }: {
   readonly record: ConversationRecord;
   readonly hit: SearchHit | null;
+  readonly keep?: KeepView | undefined;
   readonly onClose: () => void;
 }) {
   const headingId = useId();
@@ -98,9 +144,12 @@ export function PreviewPane({
           {coverageLabel(record.observation.contentCoverage)}
           {ends.length > 1 && ` ・ 分岐 ${ends.length} 本`}
         </p>
-        <button type="button" onClick={onClose}>
-          プレビューを閉じる
-        </button>
+        <div className="preview-actions">
+          {keep !== undefined && <KeepButton record={record} keep={keep} />}
+          <button type="button" onClick={onClose}>
+            プレビューを閉じる
+          </button>
+        </div>
       </header>
       {ends.length > 1 && (
         <p className="preview-branch">

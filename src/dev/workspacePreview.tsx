@@ -4,6 +4,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Workspace } from "../app/browse/Workspace";
+import { KeepPanel } from "../app/keep/KeepPanel";
+import { keepViewOf } from "../app/keep/keepView";
+import { useKeepStore } from "../app/keep/useKeepStore";
+import { memoryKeepDeps } from "./memoryKeepDeps";
 import "../app/styles.css";
 import { branchedNodes, linearNodes, record } from "../browse/testing/records";
 import type { ConversationNode } from "../import/types";
@@ -46,11 +50,23 @@ const container = document.getElementById("root");
 if (container === null) {
   throw new Error("missing #root");
 }
+function DevPage() {
+  const { store, state } = useKeepStore(memoryKeepDeps);
+  return (
+    <main className="app">
+      <h1>Workspace (synthetic data, in-memory KEEP store)</h1>
+      <Workspace
+        records={records}
+        revision={1}
+        keep={keepViewOf(state, (entry, on) => store.setKeep(entry, on))}
+        keepPanel={<KeepPanel store={store} state={state} />}
+      />
+    </main>
+  );
+}
+
 createRoot(container).render(
   <StrictMode>
-    <main className="app">
-      <h1>Workspace (synthetic data)</h1>
-      <Workspace records={records} revision={1} />
-    </main>
+    <DevPage />
   </StrictMode>,
 );

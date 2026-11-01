@@ -8,8 +8,14 @@
 // sandbox for adversarial input; runtime protection comes from the CSP and
 // from the extension not shipping the corresponding code.
 
-// `storage` is added with DEV08 (P-0004 item 6); until then it is a violation.
-export const ALLOWED_PERMISSIONS = Object.freeze(["activeTab", "scripting"]);
+// `storage` holds the encrypted KEEP store (DEV08, P-0007 item 1). Only the
+// local area is used; storage.sync is refused by checkScripts (AT29).
+export const ALLOWED_PERMISSIONS = Object.freeze(["activeTab", "scripting", "storage"]);
+
+// storage.sync in dot, optional-chaining or bracket form, with `storage`
+// itself reached by dot or bracket; defence in depth against build drift.
+// Fails closed: a bare "storage sync" token pair is reported as well.
+const STORAGE_SYNC = /storage["'`]?\s*\]?\s*(?:\?\.|\.)?\s*(?:\[\s*["'`]sync["'`]\s*\]|sync\b)/;
 
 export const FORBIDDEN_MANIFEST_KEYS = Object.freeze([
   "host_permissions",
@@ -178,6 +184,9 @@ export function checkScripts(files) {
     }
     if (name !== "content.js" && /\bonMessage(?:External)?\b/.test(source)) {
       problems.push(`${name}: registers or references a message listener`);
+    }
+    if (STORAGE_SYNC.test(source)) {
+      problems.push(`${name}: references storage.sync`);
     }
   }
   for (const name of ["content.js", "sw.js"]) {

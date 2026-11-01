@@ -13,6 +13,11 @@
   --c-warn-text: #5c4300;
   --c-row-active-bg: #dce8fa;
   --c-match-bg: #fff1b8;
+  --c-keep-bg: #e3f4e6;
+  --c-keep-text: #14532d;
+  --c-keep-border: #2f7a45;
+  --c-danger: #b42318;
+  --c-danger-text: #ffffff;
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
@@ -40,6 +45,11 @@
     --c-warn-text: #f3d68a;
     --c-row-active-bg: #233a5c;
     --c-match-bg: #4a3f12;
+    --c-keep-bg: #183a24;
+    --c-keep-text: #b8f0c8;
+    --c-keep-border: #5fbf7f;
+    --c-danger: #f97066;
+    --c-danger-text: #1b0a08;
   }
 }
 
@@ -143,6 +153,91 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
+}
+
+.left-pane {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.keep-panel {
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  padding: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.keep-panel form,
+.keep-delete {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  padding: var(--s-2);
+}
+
+.keep-panel input[type="password"] {
+  font: inherit;
+  width: 100%;
+}
+
+.keep-actions,
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+}
+
+.standalone-keep {
+  max-width: 480px;
+}
+
+.keep-badge {
+  display: inline-block;
+  min-width: 3.5em;
+  padding: 0 var(--s-1);
+  border: 1px solid var(--c-keep-border);
+  border-radius: 4px;
+  background: var(--c-keep-bg);
+  color: var(--c-keep-text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.row-trail {
+  min-width: 4em;
+  text-align: right;
+}
+
+.keep-toggle {
+  display: inline-flex;
+  gap: var(--s-2);
+  align-items: center;
+}
+
+.keep-toggle button[aria-pressed="true"] {
+  background: var(--c-keep-bg);
+  color: var(--c-keep-text);
+  border: 1px solid var(--c-keep-border);
+}
+
+button.danger {
+  background: var(--c-danger);
+  color: var(--c-danger-text);
+  border: 1px solid var(--c-danger);
+}
+
+button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .search-pane input[type="search"],

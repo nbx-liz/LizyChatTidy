@@ -5,6 +5,10 @@ import { chromeApi } from "./chromeApi";
 import { type ConnectResult, connect } from "./controller";
 import { ImportPanel } from "./ImportPanel";
 import { describeResult } from "./importLabels";
+import { chromeKeepDeps } from "./keep/chromeKeep";
+import { KeepPanel } from "./keep/KeepPanel";
+import { keepViewOf } from "./keep/keepView";
+import { useKeepStore } from "./keep/useKeepStore";
 import { useImportSession } from "./useImportSession";
 
 const PROVIDER_LABELS: Readonly<Record<Provider, string>> = {
@@ -35,6 +39,12 @@ function describe(state: ViewState): string {
 export function App({ targetTabId }: { readonly targetTabId: number | null }) {
   const [state, setState] = useState<ViewState>({ phase: "idle" });
   const { session, controller } = useImportSession();
+  const keepStore = useKeepStore(chromeKeepDeps);
+  const keep = keepViewOf(keepStore.state, (entry, on) => keepStore.store.setKeep(entry, on));
+  const keepPanel = <KeepPanel store={keepStore.store} state={keepStore.state} />;
+  // No content script is injected until storage access is restricted to the
+  // extension (P-0007 item 1, KINV-8).
+  const connectBlocked = !keepStore.store.accessRestricted;
   const result = session.result;
   // Keep the import section open until there is something to browse, and
   // whenever the latest import was not complete, so its issues stay in view.
@@ -52,11 +62,17 @@ export function App({ targetTabId }: { readonly targetTabId: number | null }) {
         <button
           type="button"
           onClick={onConnect}
-          disabled={"phase" in state && state.phase === "busy"}
+          disabled={connectBlocked || ("phase" in state && state.phase === "busy")}
         >
           対象のタブに接続
         </button>
-        <p role="status">{describe(state)}</p>
+        <p role="status">
+          {connectBlocked
+            ? keepStore.state.status === "loading"
+              ? "保存領域の設定を確認しています…"
+              : "保存領域へのアクセスを拡張の内部に限定できないため、対象のタブに接続できません。"
+            : describe(state)}
+        </p>
       </header>
       <details className="import-section" open={importOpen}>
         <summary>
@@ -67,11 +83,20 @@ export function App({ targetTabId }: { readonly targetTabId: number | null }) {
         <ImportPanel session={session} controller={controller} />
       </details>
       {result === null || session.running ? (
-        <p className="empty">
-          まだ取り込んでいません。上の「取り込み」からエクスポートの ZIP を選んでください。
-        </p>
+        <>
+          <p className="empty">
+            まだ取り込んでいません。上の「取り込み」からエクスポートの ZIP を選んでください。
+          </p>
+          <div className="standalone-keep">{keepPanel}</div>
+        </>
       ) : (
-        <Workspace key={session.revision} records={result.records} revision={session.revision} />
+        <Workspace
+          key={session.revision}
+          records={result.records}
+          revision={session.revision}
+          keep={keep}
+          keepPanel={keepPanel}
+        />
       )}
     </main>
   );
