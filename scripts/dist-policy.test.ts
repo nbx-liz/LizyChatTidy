@@ -13,7 +13,10 @@ describe("checkManifest", () => {
   it.each([
     ["a broad permission", { ...shipped, permissions: ["activeTab", "tabs"] }],
     ["the cookies permission", { ...shipped, permissions: ["cookies"] }],
-    ["storage before DEV08", { ...shipped, permissions: ["activeTab", "scripting", "storage"] }],
+    [
+      "unlimited storage",
+      { ...shipped, permissions: ["activeTab", "scripting", "storage", "unlimitedStorage"] },
+    ],
     ["host permissions", { ...shipped, host_permissions: ["https://chatgpt.com/*"] }],
     ["declared content scripts", { ...shipped, content_scripts: [] }],
     ["web accessible resources", { ...shipped, web_accessible_resources: [] }],
@@ -160,6 +163,23 @@ describe("checkScripts", () => {
 
   it("passes self-contained scripts with one listener in the content script", () => {
     expect(checkScripts(ok)).toEqual([]);
+  });
+
+  it("allows storage.local in the app bundle", () => {
+    expect(
+      checkScripts({ ...ok, "assets/app.js": "chrome.storage.local.get(k); x.syncState();" }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["dot access", "chrome.storage.sync.set(x)"],
+    ["optional chaining", "chrome.storage?.sync"],
+    ["bracket access", 'chrome.storage["sync"]'],
+    ["spaced access", "chrome.storage . sync"],
+  ])("flags storage.sync by %s (AT29)", (_label, source) => {
+    expect(checkScripts({ ...ok, "assets/app.js": source })).toEqual([
+      "assets/app.js: references storage.sync",
+    ]);
   });
 
   it("does not mistake longer identifiers for imports", () => {
