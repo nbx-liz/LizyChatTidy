@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Provider } from "../shared/origins";
 import { chromeApi } from "./chromeApi";
 import { type ConnectResult, connect } from "./controller";
+import { ImportPanel } from "./ImportPanel";
 
 const PROVIDER_LABELS: Readonly<Record<Provider, string>> = {
   chatgpt: "ChatGPT",
@@ -47,6 +48,7 @@ export function App({ targetTabId }: { readonly targetTabId: number | null }) {
       >
         対象のタブに接続
       </button>
+      <ImportPanel />
     </main>
   );
 }
