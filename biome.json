@@ -6,11 +6,14 @@
       "scripts/**/*.mjs",
       "scripts/**/*.ts",
       "public/**",
+      "tests/**",
       "vite.config.ts",
+      "playwright.config.ts",
       "app.html",
       "package.json",
       "tsconfig.json",
-      "biome.json"
+      "biome.json",
+      "!.claude"
     ]
   },
   "formatter": {
