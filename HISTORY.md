@@ -92,6 +92,10 @@ Firing rate: unmeasurable before implementation (ビルド成果物も実サー�
 
 変更内容 2（取り込み契約）を P-0005 で具体化して実装した。`ImportResult` に構造レポート `report` を加えた。`ImportIssue.code` は閉じた列挙とした。変更内容 1・3・4 は未実装のまま提案状態とする。
 
+### 一部決定（2026-11-01、DEV08）
+
+変更内容 1（KEEP のキー）を P-0007 で実装した。`KeepEntry` と判定関数 `isProtected` は `src/keep/keepRules.ts` にある。変更内容 3・4 は未実装のまま提案状態とする。
+
 ## P-0002: ビルド構成と開発ツール
 
 状態: 提案（2026-10-22）。構成の選択肢は D-0001 で所有者が決定済み。本 Proposal は版の固定方針を記録する。
