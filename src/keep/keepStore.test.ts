@@ -398,6 +398,53 @@ describe("rollback and replacement (P-0007 item 8)", () => {
   });
 });
 
+describe("overlapping operations (PR #8 review)", () => {
+  it("never lets a second unlock publish an older snapshot over a later write", async () => {
+    const area = new FakeArea();
+    const store = await created(area);
+    await store.lock();
+    const first = store.unlock(PASS);
+    const second = store.unlock(PASS);
+    const write = (async () => {
+      await first;
+      return store.setKeep(keep(ID1), true);
+    })();
+    expect(await first).toBe("ok");
+    expect(await second).toBe("not-allowed");
+    expect(await write).toBe("ok");
+    await settle();
+    expect(store.current).toEqual({ status: "available", entries: [keep(ID1)], revision: 2 });
+  });
+
+  it("does not publish absent when another tab recreated the store during deletion", async () => {
+    const area = new FakeArea();
+    const shared = new FakeLocks();
+    await created(area, shared);
+    // The deleting tab's lock call returns only after a gate, i.e. after the
+    // lock was released: the window in which another tab can create a store.
+    const gate = deferred();
+    const delayed = {
+      request: <T>(name: string, options: { signal: AbortSignal }, cb: () => Promise<T>) =>
+        shared.request(name, options, cb).then(async (value) => {
+          await gate.promise;
+          return value;
+        }),
+    };
+    const deleting = new KeepStore(deps(area, {}, delayed));
+    await deleting.init();
+    const pending = deleting.deleteStore(deleting.observedToken());
+    await settle();
+    expect(area.data.has(STORAGE_KEY)).toBe(false);
+    const creator = await started(area, shared);
+    expect(await creator.create(PASS, true)).toBe("ok");
+    await settle();
+    expect(deleting.current).toEqual({ status: "unavailable", reason: "changed-elsewhere" });
+    gate.resolve();
+    expect(await pending).toBe("superseded");
+    expect(deleting.current).toEqual({ status: "unavailable", reason: "changed-elsewhere" });
+  });
+});
+
 describe("deletion (AT32)", () => {
   it("deletes the confirmed envelope and returns to absent", async () => {
     const area = new FakeArea();

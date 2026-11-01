@@ -176,6 +176,9 @@ describe("checkScripts", () => {
     ["optional chaining", "chrome.storage?.sync"],
     ["bracket access", 'chrome.storage["sync"]'],
     ["spaced access", "chrome.storage . sync"],
+    ["optional bracket access", 'chrome.storage?.["sync"].set(x)'],
+    ["bracket access to storage and sync", 'chrome["storage"]["sync"].set(x)'],
+    ["bracket storage then dot sync", "chrome['storage'].sync"],
   ])("flags storage.sync by %s (AT29)", (_label, source) => {
     expect(checkScripts({ ...ok, "assets/app.js": source })).toEqual([
       "assets/app.js: references storage.sync",

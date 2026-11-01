@@ -45,7 +45,8 @@ describe("envelope codec (P-0007 item 2)", () => {
 
   it("accepts strict base64 only", () => {
     expect(fromBase64("AQID")).toEqual(new Uint8Array([1, 2, 3]));
-    for (const bad of ["AQI", "AQ-D", " AQID", "AQID\n", "AQ==AQ=="]) {
+    // "AR==" and "AQJ=" decode, but their unused bits are not zero (non-canonical).
+    for (const bad of ["AQI", "AQ-D", " AQID", "AQID\n", "AQ==AQ==", "AR==", "AQJ="]) {
       expect(fromBase64(bad)).toBeNull();
     }
   });

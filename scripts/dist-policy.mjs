@@ -12,8 +12,10 @@
 // local area is used; storage.sync is refused by checkScripts (AT29).
 export const ALLOWED_PERMISSIONS = Object.freeze(["activeTab", "scripting", "storage"]);
 
-// storage.sync in dot or bracket form; defence in depth against build drift.
-const STORAGE_SYNC = /storage\s*(?:\??\.\s*sync\b|\[\s*["'`]sync["'`]\s*\])/;
+// storage.sync in dot, optional-chaining or bracket form, with `storage`
+// itself reached by dot or bracket; defence in depth against build drift.
+// Fails closed: a bare "storage sync" token pair is reported as well.
+const STORAGE_SYNC = /storage["'`]?\s*\]?\s*(?:\?\.|\.)?\s*(?:\[\s*["'`]sync["'`]\s*\]|sync\b)/;
 
 export const FORBIDDEN_MANIFEST_KEYS = Object.freeze([
   "host_permissions",

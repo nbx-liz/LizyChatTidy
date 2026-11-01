@@ -218,10 +218,23 @@ export class KeepStore {
     });
   }
 
+  /**
+   * Unlocks run one at a time with the other operations, so an earlier
+   * unlock (and any write after it) is never overtaken by a later one that
+   * authenticated an older envelope (PR #8 review).
+   */
   async unlock(passphrase: string): Promise<OpResult> {
     if (this.state.status !== "locked") {
       return "not-allowed";
     }
+    return this.serial(() =>
+      this.state.status === "locked"
+        ? this.unlockNow(passphrase)
+        : Promise.resolve("not-allowed" as const),
+    );
+  }
+
+  private async unlockNow(passphrase: string): Promise<OpResult> {
     const gen = this.generation;
     let now: Observed;
     try {
@@ -344,14 +357,20 @@ export class KeepStore {
         return "ok" as const;
       });
       if (outcome === "ok" || outcome === "gone") {
-        const next = this.advance();
+        // The deleted store no longer exists, so its rollback checkpoint goes
+        // either way; the state is published only if nothing overtook us
+        // (for example another tab creating a new store) (PR #8 review).
         this.checkpoint = null;
+        if (gen !== this.generation) {
+          return "superseded";
+        }
+        const next = this.advance();
         this.observed = { kind: "absent", token: null };
         this.publish(next, { status: "absent" });
         return "ok";
       }
       if (outcome === "changed") {
-        this.fail("conflict");
+        this.failIf(gen, "conflict");
         return "changed";
       }
       return outcome === "superseded" ? "superseded" : this.failIf(gen, outcome);

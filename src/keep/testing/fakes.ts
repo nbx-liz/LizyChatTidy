@@ -148,7 +148,7 @@ export function counterRandom(bytes: number): Uint8Array {
 export function deps(
   area: FakeArea,
   extra: Partial<KeepDeps> = {},
-  locks = new FakeLocks(),
+  locks: LockManagerLike = new FakeLocks(),
 ): KeepDeps {
   return {
     storage: area.view(),

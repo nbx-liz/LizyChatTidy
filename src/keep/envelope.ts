@@ -67,7 +67,10 @@ export function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Strict base64 (standard alphabet, padded); null for anything else. */
+/**
+ * Strict canonical base64 (standard alphabet, padded, zero unused bits);
+ * null for anything else, so one byte string has exactly one accepted form.
+ */
 export function fromBase64(text: string): Uint8Array | null {
   if (!BASE64.test(text)) {
     return null;
@@ -77,7 +80,7 @@ export function fromBase64(text: string): Uint8Array | null {
   for (let i = 0; i < binary.length; i++) {
     out[i] = binary.charCodeAt(i);
   }
-  return out;
+  return toBase64(out) === text ? out : null;
 }
 
 function isRevision(value: unknown): value is number {
