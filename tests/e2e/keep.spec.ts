@@ -1,4 +1,6 @@
 // KEEP store in a real Chromium (P-0007, AT28, AT29, AT32) and its multi-tab behaviour.
+
+import { STORAGE_KEY } from "../../src/keep/envelope";
 import {
   createKeepStore,
   expect,
@@ -10,7 +12,8 @@ import {
   test,
   unlockKeepStore,
 } from "./fixtures";
-import { importSyntheticExport, SECRET_TEXT_MARKER, SECRET_TITLE_MARKER } from "./synthetic";
+import { decryptKeepEnvelope } from "./keepDecrypt";
+import { IDS, importSyntheticExport, SECRET_TEXT_MARKER, SECRET_TITLE_MARKER } from "./synthetic";
 
 test("KEEP store: create, lock on reload, wrong then right passphrase", async ({
   context,
@@ -50,13 +53,24 @@ test("KEEP store: nothing goes to storage.sync and no title or text reaches stor
   // AT29: the sync area stays empty.
   expect(await readStorage(page, "sync")).toEqual({});
 
-  // AT28: the stored value is an envelope, not readable titles or text.
+  // AT28: the raw stored value holds no readable title or text...
   const local = await readStorage(page, "local");
-  expect(Object.keys(local).length).toBeGreaterThan(0);
+  expect(Object.keys(local)).toEqual([STORAGE_KEY]);
   const dump = JSON.stringify(local);
   expect(dump).not.toContain(SECRET_TITLE_MARKER);
   expect(dump).not.toContain(SECRET_TEXT_MARKER);
   expect(dump).not.toContain("Synthetic");
+
+  // ...and, decrypted with the test passphrase, the plaintext is exactly
+  // {revision, entries: [{provider, conversationId, scope}]} (KINV-5).
+  const decrypted = await decryptKeepEnvelope(local, PASSPHRASE);
+  expect(decrypted.plaintext).toEqual({
+    revision: decrypted.revision,
+    entries: [{ provider: "chatgpt", conversationId: IDS.plain, scope: null }],
+  });
+  expect(Object.keys(decrypted.plaintext as object).sort()).toEqual(["entries", "revision"]);
+  expect(decrypted.plaintextText).not.toContain(SECRET_TITLE_MARKER);
+  expect(decrypted.plaintextText).not.toContain(SECRET_TEXT_MARKER);
 });
 
 test("KEEP marking: toggles aria-pressed, shows the badge and the count", async ({

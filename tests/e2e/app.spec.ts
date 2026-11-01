@@ -1,6 +1,14 @@
 // Management page, import, workspace and keyboard behaviour in a real Chromium
 // (INV-01, AT09, AT33 partially). Real screen-reader output is not testable here.
-import { expect, keepStatus, openApp, test, watch } from "./fixtures";
+import {
+  expect,
+  keepStatus,
+  openApp,
+  outsideExtension,
+  test,
+  watch,
+  watchRequests,
+} from "./fixtures";
 import { HOSTILE_TITLE, IDS, importSyntheticExport } from "./synthetic";
 
 test("the management page loads with no console errors and no request outside the extension (INV-01)", async ({
@@ -12,6 +20,7 @@ test("the management page loads with no console errors and no request outside th
     escaped = true;
     return route.fulfill({ status: 200, body: "reached" });
   });
+  const requests = watchRequests(context);
   const page = await context.newPage();
   const seen = watch(page);
   await page.goto(`chrome-extension://${extensionId}/app.html`);
@@ -19,8 +28,8 @@ test("the management page loads with no console errors and no request outside th
   await expect(page.getByRole("heading", { name: "LizyChatTidy", level: 1 })).toBeVisible();
 
   expect(seen.errors).toEqual([]);
-  expect(seen.requests.length).toBeGreaterThan(0);
-  expect(seen.requests.filter((url) => !url.startsWith("chrome-extension://"))).toEqual([]);
+  expect(requests.length).toBeGreaterThan(0);
+  expect(outsideExtension(requests)).toEqual([]);
 
   // connect-src 'none' stops a script-initiated request before the network.
   const outcome = await page.evaluate(() =>
@@ -31,12 +40,27 @@ test("the management page loads with no console errors and no request outside th
   );
   expect(outcome).toBe("TypeError");
   expect(escaped).toBe(false);
+  expect(outsideExtension(requests)).toEqual([]);
+});
+
+test("the request watcher sees a request from a second page (negative control for INV-01)", async ({
+  context,
+}) => {
+  await context.route("https://example.test/**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: "<p>control</p>" }),
+  );
+  const requests = watchRequests(context);
+  const other = await context.newPage();
+  await other.goto("https://example.test/control");
+  // If this were empty, every "no request left the extension" assertion would pass vacuously.
+  expect(outsideExtension(requests)).toContain("https://example.test/control");
 });
 
 test("import shows the count and renders hostile strings as text (AT09)", async ({
   context,
   extensionId,
 }) => {
+  const requests = watchRequests(context);
   const page = await openApp(context, extensionId);
   const seen = watch(page);
   await importSyntheticExport(page);
@@ -51,7 +75,8 @@ test("import shows the count and renders hostile strings as text (AT09)", async 
   expect(await page.locator("img[src='x'], .messages script, .messages b").count()).toBe(0);
   expect(await page.evaluate(() => "__pwned" in window)).toBe(false);
   expect(seen.errors).toEqual([]);
-  expect(seen.requests.filter((url) => !url.startsWith("chrome-extension://"))).toEqual([]);
+  expect(requests.length).toBeGreaterThan(0);
+  expect(outsideExtension(requests)).toEqual([]);
 });
 
 test("keyboard: list navigation, Enter opens the preview, Escape returns to the list (AT33)", async ({

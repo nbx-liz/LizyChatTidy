@@ -121,17 +121,33 @@ export function readStorage(page: Page, area: "local" | "sync"): Promise<Record<
   return page.evaluate((name) => chrome.storage[name].get(null), area);
 }
 
-/** Collects console errors, page errors and every request URL the page makes. */
-export function watch(page: Page): { errors: string[]; requests: string[] } {
-  const seen = { errors: [] as string[], requests: [] as string[] };
+/** Collects console errors and page errors of one page. */
+export function watch(page: Page): { errors: string[] } {
+  const seen = { errors: [] as string[] };
   page.on("console", (message) => {
     if (message.type() === "error") {
       seen.errors.push(message.text());
     }
   });
   page.on("pageerror", (error) => seen.errors.push(`pageerror: ${error.message}`));
-  page.on("request", (request) => seen.requests.push(request.url()));
   return seen;
+}
+
+/**
+ * Records every request URL made by ANY page in the context (a tab opened by
+ * chrome.tabs.create included). Call it before the first page is opened.
+ * Limit: Playwright reports an extension service worker's own requests only
+ * when its experimental service-worker network events are on, so a request
+ * issued by the worker itself is not seen here.
+ */
+export function watchRequests(context: BrowserContext): string[] {
+  const urls: string[] = [];
+  context.on("request", (request) => urls.push(request.url()));
+  return urls;
+}
+
+export function outsideExtension(urls: readonly string[]): string[] {
+  return urls.filter((url) => !url.startsWith("chrome-extension://"));
 }
 
 /**
