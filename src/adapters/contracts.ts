@@ -114,6 +114,8 @@ export interface PageValue {
   readonly documentKey: string;
   readonly records: readonly InventoryRecord[];
   readonly invalidRecords: number;
+  /** Canonical ids on records that failed validation; they still count as occurrences. */
+  readonly invalidIds: readonly string[];
   readonly next: { readonly kind: "cursor"; readonly cursor: string } | { readonly kind: "end" };
   readonly reportedTotal: number | null;
 }

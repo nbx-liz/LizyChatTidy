@@ -40,6 +40,27 @@ describe("binding()", () => {
     await locking;
   });
 
+  it("hands out entries a caller cannot use to change the store (review 1 sweep)", async () => {
+    const store = await created();
+    await store.setKeep(keep(ID1), true);
+    const b = store.binding();
+    try {
+      (b?.entries as KeepEntry[]).length = 0;
+    } catch {
+      // frozen
+    }
+    await store.withOrderedSnapshot((v) => {
+      if (v.status === "available") {
+        try {
+          (v.entries as KeepEntry[]).length = 0;
+        } catch {
+          // frozen
+        }
+      }
+    });
+    expect(store.binding()?.entries).toEqual([keep(ID1)]);
+  });
+
   it("changes generation across lock and unlock", async () => {
     const store = await created();
     const before = store.binding()?.generation;

@@ -31,8 +31,20 @@ export class RunController {
   get phase(): Phase {
     return this.s.phase;
   }
+  /** A frozen copy: the snapshot plans are built from never leaves the controller. */
   get snapshot(): InventorySnapshot | null {
-    return this.s.snap;
+    const snap = this.s.snap;
+    if (snap === null) {
+      return null;
+    }
+    return Object.freeze({
+      ...snap,
+      adapter: Object.freeze({ ...snap.adapter }),
+      subject: Object.freeze({ ...snap.subject }),
+      records: new Map(snap.records),
+      duplicateIds: new Set(snap.duplicateIds),
+      issues: new Set(snap.issues),
+    });
   }
   get plan(): DeletePlan | null {
     return this.s.plan;
@@ -102,7 +114,13 @@ export class RunController {
 
   /** No further dispatch; a write already sent is awaited and reconciled (AT23). */
   stop(): void {
-    this.s.stopRequested = true;
+    const s = this.s;
+    s.stopRequested = true;
+    // An approval a stop hit is gone, also while start() is still awaiting (review 1 #3).
+    if (s.phase === "approved") {
+      s.approvals.clear();
+      s.phase = "ready";
+    }
   }
 
   reconcileUncertain(): Promise<OpOutcome> {

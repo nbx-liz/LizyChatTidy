@@ -592,7 +592,7 @@ P-0004〜P-0007 は、実ブラウザーでしか確かめられない主張を 
 
 ## P-0009: 削除側の枠組み — 一覧の固定、削除計画、一回限りの承認、逐次実行（DEV09 の中核）
 
-状態: 提案（2026-11-01）。Codex の critique（1 ラウンド、指摘 11 件）を受けて改訂した（末尾「critique への対応」）。
+状態: 提案（2026-11-01）。Codex の critique（1 ラウンド、指摘 11 件）を受けて改訂した（末尾「critique への対応」）。PR #10 のレビュー（1 ラウンド、指摘 9 件）で契約を補った（第 1・3・4・6・9 節の「レビュー 1」の記述）。
 
 Gate-category: state-machine, concurrency-ownership, shared-state-invariant
 
@@ -722,6 +722,8 @@ interface DeleteAdapter {
   - `list-absent`: 1 回の要求で、一覧に対象 ID が含まれるかを権威をもって答える応答（ID で絞った一覧の照会など）が「含まれない」を示したこと。一覧の 1 ページに現れないことはこれに当たらない。そうした要求がない Adapter は `list-absent` を宣言できない。複数ページの走査を要する照合は本 Proposal では扱わない。
   - DEV03 で、公式 UI で削除した会話・非表示にした会話・アーカイブした会話・アクセスできない会話の 4 つについて応答を記録し、`item-deleted-marker` が削除した会話だけで成り立つことを確かめる。確かめられなければ `verificationEvidenceRef` を書けず、automaticDelete は無効のままである。ChatGPT の削除が `is_visible: false` の更新とされる点（§12）は、削除と非表示を区別できるかという DEV03 の問いとして残る。
 - **gate**: `capabilityEnabled(gate, buildKind)` を純粋な関数とする。配布版は 4 判定がすべて `allowed` のときだけ有効。個人用ビルドは、technical と safety が `allowed`、termsAndPermission が `allowed` か `ownerAcceptedRisk`（このとき `evidenceRefs` が `HISTORY.md#P-0003` を含む）、storePolicy が `allowed` か `notApplicable` のときだけ有効（§10）。`ownerAcceptedRisk` を他の判定に、`notApplicable` を storePolicy 以外に置いた gate は不正として無効にする。ビルドの種類は Controller の引数で受け取る。個人用ビルドを作る切り替えと、配布版に DeleteAdapter が含まれないことのビルド成果物の検査は、所有者の Adapter を組み込む Proposal で決める。それまで実際のビルドに Adapter はなく、何も有効にならない。
+- **宣言の固定**（レビュー 1）: Controller は作られた時点で Read / Delete の descriptor と gate を深く複製して凍結し、判定（検証、間隔、`listedKinds`、`fingerprintFields`、`verificationRule`）にはこの複製だけを使う。Read・Delete の各呼び出しの前と照合を受理する前に、Adapter の生の宣言が複製と一致すること（正準 JSON の比較）を確かめ、違えば無効にする（呼び出す前なら `delete-unavailable` の `failed`、送出の後なら `uncertain`）。計画とスナップショットの Adapter の識別（`adapterId`・`version`）も複製と比べ、違えば計画を作らず承認を通さない。
+- **渡す値の凍結**（レビュー 1）: 計画・承認・各件の結果・解析したレコードは凍結し、Controller が外へ見せるスナップショットは複製とする。Adapter に渡す札と一覧の文脈は呼び出しごとに新しく作って凍結し、主体は複製を入れる（計画の内部の値を Adapter や呼び出し元に渡さない）。`start` は計画の digest を計算し直し、承認の digest と一致しなければ開始しない。
 - **所有者の実装が保証すること**（枠組みでは確かめられず、DEV03 とレビューで確かめる）: `inspectScope`・`listPage`・`preflight`・`reconcileOne` は要求を高々 1 回送り、`prepareCommit` は要求を送らない。`dispatch` は同期のうちに確定の指示を 1 回だけ送り出し（`chrome.tabs.sendMessage` の呼び出しを `dispatch` の中で済ませる）、`await` の後に送ることをしない。文書が `documentKey` と違えば送らずに例外を投げる。要求は INV-17 の固定テンプレートだけで、確定だけが書き込み用テンプレートを使う。札の主体・文書・対象 ID を要求に入れ、他の ID を指さない。`PageValue.subject` はその要求自身の応答（または要求に明示した主体）から得る。`accepted: true` は書き込み要求に想定どおりの応答があった場合だけ返す。`InventoryRecord` の各項目の意味を Adapter の版と共に固定する。アクセストークンは INV-02 の範囲を出さない。
 
 #### 2. サービスごとの排他と要求の間隔（INV-09、INV-19）
@@ -734,6 +736,7 @@ interface DeleteAdapter {
 
 - `chrome.storage.local` のキー `lizychattidy.run-ledger.<provider>` に、閉じた形の記録 `RunLedger { format: "lizychattidy-run-ledger", schemaVersion: 1, provider, epoch, pending }` を置く。`epoch` は 0 以上の安全な整数、`pending` は `null` か `{ barrierId, count, firstDispatchedAt, lastDispatchedAt }`（`barrierId` は UUID v4、時刻は epoch ms、`count` は 1 以上）。**会話の ID・タイトル・主体の値を含めない**（AT28。BLUEPRINT §5 は識別情報を同意のもとで暗号化して保存するとしており、未確認の件の ID を平文で残さないため）。KEEP の封筒とは別のキーで、KEEP の保存形式を変えない。
 - 書き込みはサービスのロックの中で、読み直した記録に対してだけ行う。確定ごとに、送出の前に `count` を 1 増やして書く（先行書き込み。初めての件では `pending` を作る）。書けなければ送出しない（`failed`、`ledger-write-failed`）。送出しなかった件（KEEP で除外、停止）と `verified` の件は、その後 `count` を 1 減らし、0 になれば `pending` を `null` にする。`uncertain` の件は減らさない。
+- 記録の結び付け（レビュー 1）: 先行書き込みは、記録の `epoch` が計画の `ledgerEpoch` と同じ場合だけ行い、その件が数えられた `epoch` と `barrierId` を「請求」として Controller のメモリに残す。減らすのは、記録の `epoch` と `pending.barrierId` が請求と一致する場合だけである。復旧で消えた障壁（`epoch` か `barrierId` が違う）には触れない（その後の別の障壁の件数を、古い照合が消さない）。請求のない件は減らさない。
 - 記録が読めない・形が不正・`pending` が `null` でない場合、どの Controller も実行を開始しない（`recovery-required`）。管理画面を閉じても、別のタブでも同じである。`epoch` は承認と計画に記録し（後述）、復旧で 1 増やして、それより前の計画・承認を通さない。
 - **復旧の手順**: 利用者が新しい一覧を取得し（スナップショットの `capturedAt` が `lastDispatchedAt` より後）、`draft` で「結果未確認の書き込みが N 件あります。サービスの画面で確認しました」を明示的に選ぶ（`acknowledgeRecovery`）。サービスのロックの中で、記録が確認時に見たもの（`barrierId` または不正な形の文字列）と一致すれば、`pending` を `null`、`epoch` を 1 増やして書き、このスナップショットに新しい `epoch` を記録する。一致しなければ何もしない。同じ Controller の中で、送出した `uncertain` の件を照合で `verified` にできた場合は、その件の分だけ `count` を減らせる（第 9 節）。
 - 拡張を削除すると記録も消える。KEEP の保存データの削除（FR11）はこの記録を消さない。
@@ -744,7 +747,8 @@ interface DeleteAdapter {
 - `listPage` に `ScanContext`（期待する主体と `documentKey`）を毎回渡す。各ページの `subject` が `verified` で期待する主体（`accountKey`・`workspaceKey`・`workspaceKind`）と一致し、`documentKey` が一致しなければ取得を止めて `failed`（`subject-changed` / `document-changed`）。A → B → A の切り替えでも、B の間のページで止まる。
 - スナップショット `InventorySnapshot { snapshotId, source, provider, adapter: { adapterId, version }, importVersion, subject, documentKey, ledgerEpoch, records, invalid, completeness, capturedAt }`。`web-api` では `importVersion` は `null`。公式エクスポートの取り込み結果（P-0005）も同じ形に写し、`adapter` は `{ adapterId: "chatgpt-official-export", version: <ExportImporter.version> }`、`importVersion` は取り込みの版番号、`subject` は未検証、`documentKey` と `ledgerEpoch` は `null` とする（`canPlanDeletionFrom` が偽なら写さない）。
 - Controller が持つスナップショットは 1 つだけで、新しいスナップショットを作るとそれに置き換わる。`running` の間は作らない。公式エクスポートの再取り込みは、現在のスナップショットが公式エクスポート由来の場合だけ置き換えに当たる。
-- 完全性は Domain が決める。`complete` は `listing.stableSnapshot` が `true` で、走査に次の異常が 1 つもない場合だけ。異常: 重複した ID、検証に通らないレコード、同じ `cursor` の再出現、`order: "updatedAt-desc"` の場合の並びの逆転（ページ境界を含む）、`reportedTotal` のページ間の変化・件数と矛盾する終端、上限（ページ 10,000、レコード 100,000）への到達。異常があれば `partial`、契約がなく異常もなければ `unknown`。重複した ID は両方とも計画の候補にしない。
+- 完全性は Domain が決める。`complete` は `listing.stableSnapshot` が `true` で、走査に次の異常が 1 つもない場合だけ。異常: 重複した ID、検証に通らないレコード、同じ `cursor` の再出現、`order: "updatedAt-desc"` の場合の並びの逆転（ページ境界を含む）、`reportedTotal` のページ間の変化・件数と矛盾する終端、上限（ページ 10,000、レコード 100,000）への到達。異常があれば `partial`、契約がなく異常もなければ `unknown`。重複した ID は両方とも計画の候補にしない。検証に通らないレコードでも正規形式の ID を持つものは、その ID の出現として数える（レビュー 1。ページをまたいでも数える）。
+- 各ページの要求の直前（間隔の待ちの後）に、Controller が閉じていないこと、サービスのロックを持っていること、Read が有効なままであることを確かめ、当たれば要求を送らずに取得を止める（レビュー 1）。
 - 取得中の `Anomaly`・不正な値は取得を止め、スナップショットを作らない（`failed`）。`Retry-After` は表示だけ。
 
 #### 5. 削除計画（`draft` → `ready`）
@@ -779,6 +783,7 @@ interface DeleteAdapter {
 
 - `approve(planId, planDigest)` は、状態が `ready`、計画が現在の計画で digest が一致し、`approvableUntil` 前で、`KeepStore.binding()` が `null` でなく `storeId` と世代が計画と同じで、Delete が有効で、記録が読めて `pending` が `null` かつ `epoch` が計画の `ledgerEpoch` と同じ場合だけ、`Approval { approvalId, planId, planDigest, ledgerEpoch, issuedAt, expiresAt }` を発行する。`expiresAt` は発行から 60 分（暫定）。`approved` での `approve` は拒否する（置き換えない）。承認をやめるのは `revokeApproval`（`approved` → `ready`）だけである。承認はメモリにだけ置く。
 - 一回限り: `start(approvalId)` が受け付けた時点で「`start` に使えない」状態にする。その承認は、消費した実行を、期限切れか無効化まで引き続き支配する（第 9 節の「承認が有効」はこの意味）。
+- 停止（レビュー 1）: `approved` での `stop` は承認を無効にして `ready` に戻す。`start` の途中の待ち（digest の計算、ロック、記録の読み取り）の間に来た停止も失わず、待ちの後に確かめて開始しない。停止の印は新しい承認を発行したときだけ消える。
 - 承認を無効にする事象: 計画の破棄・置き換え、スナップショットの置き換え、Adapter の版の変化、主体・文書の不一致、`KeepStore.binding()` が `null` になること・`storeId` か世代の変化（施錠、再読み込み、他のタブの変更、競合）、記録の `pending` の出現・`epoch` の変化、停止、`dispose`、期限切れ。KEEP の `revision` の変化（通常の付け外し）は無効にせず、各件の送出直前の再確認で扱う（§7、AT12）。
 - 期限の確かめ: `approvableUntil` は `approve` で、承認の `expiresAt` は `start`、各件の最初の呼び出しの前、preflight の後、KEEP の区間の中の送出の直前で確かめる。送出の後は期限を過ぎても応答を待ち、照合を行う（§4: 照合は承認の期限切れの後も発行できる）。
 
@@ -824,7 +829,7 @@ KeepStore に次の 2 つの公開メソッドを加える。既存のメソッ�
 
 各対象について、次を順に行う。
 
-1. 停止・`dispose`・承認の期限と無効化を確かめる。当たれば何も送らず `paused`（停止・期限）または `failed`（無効化）にする。
+1. 停止・`dispose`・承認の期限と無効化を確かめる。当たれば何も送らず `paused`（停止・期限）または `failed`（無効化）にする。この確かめは、各件の最初だけでなく、待ち（間隔、準備、KEEP の区間）の後と、Adapter のどの呼び出しの直前にも行い、あわせてサービスのロックを持っていることと Delete が有効なままであることを確かめる（レビュー 1）。`dispose` の後は、照合を含めて何も呼ばない。
 2. `preflight`。主体を `accountKey`・`workspaceKey` の完全一致で計画と比べる（表示名は使わない。AT16）。主体・文書の不一致は承認を無効にし、この件を `uncertain`（`subject-changed` / `document-changed`）にする（INV-19）。`Anomaly`・不正な値も `uncertain`。`absent`（ID が対象と一致すること）は `skipped`（`absent-before-commit`）として次へ。`present` のレコードを検証し、ID が対象と違えば `uncertain`。`activity` が `idle` でなければ `skipped`（`active-or-unknown`）、fingerprint が計画と違えば `skipped`（`state-changed`）として次へ（AT19、§7 の 4）。
 3. 1 を再び確かめる。`prepareCommit`。`Anomaly`・不正な値は `uncertain`（送っていない）。
 4. 間隔の待ち、記録の先行書き込み、KEEP の区間と送出（第 8 節）。

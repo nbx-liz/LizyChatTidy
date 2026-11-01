@@ -113,6 +113,15 @@ export type OrderedKeepView =
         | "read-failed";
     };
 
+/** A frozen copy, so a caller of binding() or withOrderedSnapshot() cannot change the session. */
+function frozenEntries(entries: readonly KeepEntry[]): readonly KeepEntry[] {
+  return Object.freeze(
+    entries.map((e) =>
+      Object.freeze({ ...e, scope: e.scope === null ? null : Object.freeze({ ...e.scope }) }),
+    ),
+  );
+}
+
 export class KeepStore {
   private state: KeepState = { status: "loading" };
   private generation = 0;
@@ -401,7 +410,7 @@ export class KeepStore {
       return null;
     }
     return {
-      entries: s.entries,
+      entries: frozenEntries(s.entries),
       revision: s.envelope.revision,
       storeId: s.envelope.storeId,
       generation: this.generation,
@@ -432,7 +441,7 @@ export class KeepStore {
         ran = {
           value: fn({
             status: "available",
-            entries: s.entries,
+            entries: frozenEntries(s.entries),
             revision: s.envelope.revision,
             storeId: s.envelope.storeId,
             generation: gen,

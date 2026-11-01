@@ -11,7 +11,7 @@ export class ApprovalBook {
   }
 
   issue(fields: Omit<Approval, "issuedAt" | "expiresAt">, now: number): Approval {
-    this.value = { ...fields, issuedAt: now, expiresAt: now + APPROVAL_TTL_MS };
+    this.value = Object.freeze({ ...fields, issuedAt: now, expiresAt: now + APPROVAL_TTL_MS });
     this.used = false;
     this.invalid = false;
     return this.value;

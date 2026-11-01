@@ -117,14 +117,56 @@ export async function writeLedger(storage: LedgerStorage, ledger: RunLedger): Pr
   }
 }
 
-/** Reads the ledger and writes `change` of it; false when it is not readable or the write fails. */
-export async function updateLedger(
+/** The barrier a write-ahead was counted in (review 1 #1). */
+export interface LedgerClaim {
+  readonly epoch: number;
+  readonly barrierId: string;
+}
+
+/**
+ * Write-ahead before a dispatch, only while the ledger is still at the epoch
+ * the run was approved under. Returns the claim, or null when the ledger is
+ * unreadable, at another epoch, or the write fails.
+ */
+export async function claimPending(
   storage: LedgerStorage,
   provider: Provider,
-  change: (ledger: RunLedger) => RunLedger,
+  epoch: number,
+  now: number,
+  newBarrierId: () => string,
+): Promise<LedgerClaim | null> {
+  const read = await readLedger(storage, provider);
+  if (read.kind !== "ok" || read.ledger.epoch !== epoch) {
+    return null;
+  }
+  const next = withOneMorePending(read.ledger, now, newBarrierId);
+  const pending = next.pending;
+  if (pending === null || !(await writeLedger(storage, next))) {
+    return null;
+  }
+  return Object.freeze({ epoch, barrierId: pending.barrierId });
+}
+
+/**
+ * Takes one pending write back, but only from the barrier it was counted in.
+ * A barrier that was cleared by recovery (another epoch or barrier id) is
+ * left untouched: its count belongs to someone else. Returns false only when
+ * the ledger cannot be read or written.
+ */
+export async function releaseClaim(
+  storage: LedgerStorage,
+  provider: Provider,
+  claim: LedgerClaim,
 ): Promise<boolean> {
   const read = await readLedger(storage, provider);
-  return read.kind === "ok" ? writeLedger(storage, change(read.ledger)) : false;
+  if (read.kind !== "ok") {
+    return false;
+  }
+  const l = read.ledger;
+  if (l.epoch !== claim.epoch || l.pending?.barrierId !== claim.barrierId) {
+    return true;
+  }
+  return writeLedger(storage, withOneLessPending(l));
 }
 
 /** Write-ahead before a dispatch: one more pending write. */

@@ -24,6 +24,10 @@ export async function collect(s: RunState): Promise<OpOutcome> {
   if (!s.readEnabled()) {
     return no("read-unavailable");
   }
+  const descriptor = s.adapters.read;
+  if (descriptor === null) {
+    return no("read-unavailable");
+  }
   const refused = await s.acquire();
   if (refused !== null) {
     return no(refused);
@@ -38,11 +42,13 @@ export async function collect(s: RunState): Promise<OpOutcome> {
     const ledger = await readLedger(s.deps.ledger, s.deps.provider);
     const result = await scanInventory({
       read: s.deps.read,
+      descriptor,
       clock: s.deps.clock,
       pacer: s.pacer,
       newId: s.deps.newId,
       ledgerEpoch: ledger.kind === "ok" ? ledger.ledger.epoch : null,
       cancelled: () => s.cancelRequested || s.disposed,
+      mayCall: () => s.mayRead(),
     });
     if (result.ok) {
       s.snap = result.snapshot;
@@ -87,9 +93,13 @@ export async function planFrom(
   ids: readonly string[],
   parent: string | null,
 ): Promise<OpOutcome> {
-  const del = s.deps.del;
+  const del = s.adapters.del;
   if (del === null || !s.deleteEnabled()) {
     return no("delete-unavailable");
+  }
+  // A web snapshot taken by another adapter identity is never planned from (review 1 #5).
+  if (snap.source === "web-api" && !s.adapters.sameIdentity(snap.adapter)) {
+    return no("adapter-changed");
   }
   const keep = s.deps.keep.binding();
   if (keep === null) {
@@ -101,7 +111,7 @@ export async function planFrom(
     snapshot: snap,
     ids,
     keep,
-    del: del.descriptor,
+    del,
     parentPlanId: parent,
     now: clock.now(),
     newId,
@@ -147,6 +157,7 @@ export async function approve(s: RunState, planId: string, planDigest: string): 
   }
   const fields = { approvalId: s.deps.newId(), planId, planDigest, ledgerEpoch: l.epoch };
   s.approvals.issue(fields, s.deps.clock.now());
+  s.stopRequested = false; // a stop applies to the approval it hit, not to a new one
   s.phase = "approved";
   return OK;
 }

@@ -10,6 +10,7 @@ import type {
 import { isProtected } from "../keep/keepRules";
 import type { KeepBinding } from "../keep/keepStore";
 import { canonicalJson, sha256Hex } from "./canonical";
+import { deepFreeze } from "./freeze";
 import type { Completeness, InventorySnapshot } from "./inventory";
 
 export const PLAN_APPROVABLE_MS = 15 * 60_000;
@@ -194,7 +195,7 @@ export async function buildPlan(input: PlanInput): Promise<PlanResult> {
     provider: snapshot.provider,
     subject: { accountKey: subject.accountKey, workspaceKey: subject.workspaceKey },
     documentKey: snapshot.documentKey,
-    adapter: snapshot.adapter,
+    adapter: { adapterId: snapshot.adapter.adapterId, version: snapshot.adapter.version },
     snapshot: {
       snapshotId: snapshot.snapshotId,
       completeness: snapshot.completeness,
@@ -205,5 +206,6 @@ export async function buildPlan(input: PlanInput): Promise<PlanResult> {
     targets,
     excluded: counts,
   };
-  return { ok: true, plan: { ...body, planDigest: await digestOf(input.subtle, body) } };
+  const plan: DeletePlan = { ...body, planDigest: await digestOf(input.subtle, body) };
+  return { ok: true, plan: deepFreeze(plan) };
 }

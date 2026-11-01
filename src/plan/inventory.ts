@@ -5,6 +5,7 @@ import type {
   InventoryRecord,
   PageValue,
   ReadAdapter,
+  ReadDescriptor,
   SubjectEvidence,
   SubjectKeys,
 } from "../adapters/contracts";
@@ -58,11 +59,15 @@ export type ScanResult =
 
 export interface ScanDeps {
   readonly read: ReadAdapter;
+  /** The validated copy, never the adapter's live object (review 1 #5, #6). */
+  readonly descriptor: ReadDescriptor;
   readonly clock: Clock;
   readonly pacer: Pacer;
   readonly newId: () => string;
   readonly ledgerEpoch: number | null;
   readonly cancelled: () => boolean;
+  /** Re-checked after every wait and right before every call: lock held, read still enabled. */
+  readonly mayCall: () => boolean;
 }
 
 function sameSubject(
@@ -77,16 +82,29 @@ function sameSubject(
   );
 }
 
+/**
+ * Counts every occurrence of an id, valid or not, across all pages; an id
+ * seen more than once is a duplicate and is never planned (P-0009 item 4).
+ */
 class Collector {
-  readonly seen = new Map<string, InventoryRecord>();
-  readonly duplicates = new Set<string>();
+  readonly valid = new Map<string, InventoryRecord>();
+  readonly occurrences = new Map<string, number>();
   readonly issues = new Set<ScanIssue>();
   readonly cursors = new Set<string>();
   invalid = 0;
+  private listed = 0;
   total: number | null | undefined = undefined;
   lastUpdated: string | null | undefined = undefined;
 
   constructor(private readonly ordered: boolean) {}
+
+  private occur(id: string): void {
+    const n = (this.occurrences.get(id) ?? 0) + 1;
+    this.occurrences.set(id, n);
+    if (n > 1) {
+      this.issues.add("duplicate-id");
+    }
+  }
 
   add(page: PageValue): void {
     if (page.invalidRecords > 0) {
@@ -97,19 +115,27 @@ class Collector {
       this.issues.add("total-changed");
     }
     this.total = page.reportedTotal;
+    this.listed += page.records.length + page.invalidRecords;
+    for (const id of page.invalidIds) {
+      this.occur(id);
+    }
     for (const r of page.records) {
       this.checkOrder(r);
-      if (this.seen.has(r.conversationId) || this.duplicates.has(r.conversationId)) {
-        this.seen.delete(r.conversationId);
-        this.duplicates.add(r.conversationId);
-        this.issues.add("duplicate-id");
-      } else {
-        this.seen.set(r.conversationId, r);
-      }
+      this.occur(r.conversationId);
+      this.valid.set(r.conversationId, r);
     }
     if (this.count() > MAX_RECORDS) {
       this.issues.add("limit");
     }
+  }
+
+  duplicates(): Set<string> {
+    return new Set([...this.occurrences].filter(([, n]) => n > 1).map(([id]) => id));
+  }
+
+  /** Valid records whose id occurred exactly once. */
+  records(): Map<string, InventoryRecord> {
+    return new Map([...this.valid].filter(([id]) => this.occurrences.get(id) === 1));
   }
 
   private checkOrder(r: InventoryRecord): void {
@@ -128,22 +154,27 @@ class Collector {
     this.lastUpdated = r.updatedAt;
   }
 
+  /** Every listed entry, valid or not, duplicates included. */
   count(): number {
-    return this.seen.size + this.duplicates.size + this.invalid;
+    return this.listed;
   }
 }
 
 /** Runs the scan: inspectScope, then listPage until the end, bound to one subject and document. */
 export async function scanInventory(deps: ScanDeps): Promise<ScanResult> {
   const { read, clock, pacer } = deps;
-  const d = read.descriptor;
+  const d = deps.descriptor;
   const scopeExec = deps.newId();
-  await pacer.beforeRequest();
+  await pacer.wait();
+  if (deps.cancelled() || !deps.mayCall()) {
+    return { ok: false, failure: { reason: "cancelled" } };
+  }
+  pacer.mark();
+  const scopeCtx = Object.freeze({ execId: scopeExec, expiresAt: clock.now() + CALL_DEADLINE_MS });
   const scope = await call(
     clock,
     scopeExec,
-    (signal) =>
-      read.inspectScope({ execId: scopeExec, expiresAt: clock.now() + CALL_DEADLINE_MS }, signal),
+    (signal) => read.inspectScope(scopeCtx, signal),
     parseScope,
   );
   if (!scope.ok) {
@@ -154,20 +185,28 @@ export async function scanInventory(deps: ScanDeps): Promise<ScanResult> {
     return { ok: false, failure: { reason: "subject-unverified" } };
   }
   const documentKey = scope.value.documentKey;
-  const keys: SubjectKeys = { accountKey: subject.accountKey, workspaceKey: subject.workspaceKey };
+  const keys = (): SubjectKeys =>
+    Object.freeze({ accountKey: subject.accountKey, workspaceKey: subject.workspaceKey });
   const collector = new Collector(d.listing.order === "updatedAt-desc");
   let cursor: string | null = null;
   for (let pageNo = 0; ; pageNo++) {
-    if (deps.cancelled()) {
-      return { ok: false, failure: { reason: "cancelled" } };
-    }
     if (pageNo >= MAX_PAGES) {
       collector.issues.add("limit");
       break;
     }
     const execId = deps.newId();
-    await pacer.beforeRequest();
-    const ctx = { execId, expiresAt: clock.now() + CALL_DEADLINE_MS, subject: keys, documentKey };
+    await pacer.wait();
+    if (deps.cancelled() || !deps.mayCall()) {
+      return { ok: false, failure: { reason: "cancelled" } };
+    }
+    pacer.mark();
+    // A fresh frozen context per call, so an adapter cannot change what later pages are bound to.
+    const ctx = Object.freeze({
+      execId,
+      expiresAt: clock.now() + CALL_DEADLINE_MS,
+      subject: keys(),
+      documentKey,
+    });
     const at: string | null = cursor;
     const page: CallResult<PageValue> = await call(
       clock,
@@ -215,8 +254,8 @@ export async function scanInventory(deps: ScanDeps): Promise<ScanResult> {
       subject,
       documentKey,
       ledgerEpoch: deps.ledgerEpoch,
-      records: collector.seen,
-      duplicateIds: collector.duplicates,
+      records: collector.records(),
+      duplicateIds: collector.duplicates(),
       invalidCount: collector.invalid,
       issues: collector.issues,
       completeness,
@@ -244,16 +283,19 @@ export function snapshotFromExport(
   }
   const records = new Map<string, InventoryRecord>();
   for (const r of result.records) {
-    records.set(r.conversationId, {
-      conversationId: r.conversationId,
-      kind: "official-export",
-      title: r.title,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-      archived: r.archived,
-      activity: "unknown",
-      stateToken: null,
-    });
+    records.set(
+      r.conversationId,
+      Object.freeze({
+        conversationId: r.conversationId,
+        kind: "official-export",
+        title: r.title,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        archived: r.archived,
+        activity: "unknown",
+        stateToken: null,
+      }),
+    );
   }
   return {
     snapshotId: newId(),

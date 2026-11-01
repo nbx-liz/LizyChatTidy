@@ -40,6 +40,11 @@ export class ServiceSession {
     return null;
   }
 
+  /** True while this controller holds the service lock. */
+  holds(): boolean {
+    return this.held !== null;
+  }
+
   release(): void {
     if (this.held !== null) {
       this.releasing = this.held.release();

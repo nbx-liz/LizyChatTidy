@@ -203,7 +203,7 @@ export function parseRecord(
   if (stateToken !== null && !isToken(stateToken)) {
     return null;
   }
-  return {
+  return Object.freeze({
     conversationId: id,
     kind,
     title: title as string | null,
@@ -212,7 +212,16 @@ export function parseRecord(
     archived: archived as boolean | null,
     activity,
     stateToken: stateToken as string | null,
-  };
+  });
+}
+
+/** The canonical id of a record that failed validation, if it has one (duplicate detection). */
+export function identifiableId(value: unknown, provider: Provider): string | null {
+  if (!isPlain(value)) {
+    return null;
+  }
+  const id = value["conversationId"];
+  return typeof id === "string" && isCanonicalId(provider, id) ? id : null;
 }
 
 export function parseScope(value: unknown): ScopeValue | null {
@@ -265,11 +274,16 @@ export function parsePage(
     return null;
   }
   const records: InventoryRecord[] = [];
+  const invalidIds: string[] = [];
   let invalidRecords = 0;
   for (const raw of rawRecords) {
     const record = parseRecord(raw, provider, listedKinds);
     if (record === null) {
       invalidRecords++;
+      const id = identifiableId(raw, provider);
+      if (id !== null) {
+        invalidIds.push(id);
+      }
     } else {
       records.push(record);
     }
@@ -279,6 +293,7 @@ export function parsePage(
     documentKey: value["documentKey"],
     records,
     invalidRecords,
+    invalidIds,
     next,
     reportedTotal: total as number | null,
   };

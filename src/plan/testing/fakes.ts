@@ -14,9 +14,26 @@ export class FakeClock implements Clock {
     return this.t;
   }
 
+  /** When set, the next sleep() waits for it (one shot). */
+  private hold: Promise<void> | null = null;
+
   async sleep(ms: number): Promise<void> {
     this.sleeps.push(ms);
+    const hold = this.hold;
+    this.hold = null;
+    if (hold !== null) {
+      await hold;
+    }
     this.t += ms;
+  }
+
+  /** Makes the next sleep() wait until the returned function is called. */
+  holdNextSleep(): () => void {
+    let release: () => void = () => undefined;
+    this.hold = new Promise<void>((r) => {
+      release = r;
+    });
+    return release;
   }
 
   deadline(_ms: number): { readonly expired: Promise<void>; cancel(): void } {
