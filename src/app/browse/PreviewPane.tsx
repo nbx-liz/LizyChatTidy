@@ -47,12 +47,10 @@ function branchLabel(
   branches: BranchIndex,
   end: string,
   index: number,
-  matched: ReadonlySet<string>,
+  matchedEnds: ReadonlySet<string>,
 ) {
   const current = branches.currentKnown && end === branches.defaultEnd ? "（現在）" : "";
-  const hasMatch =
-    matched.size > 0 && (branches.path(end)?.nodes ?? []).some((n) => matched.has(n.id));
-  return `ブランチ ${index + 1}${current}${hasMatch ? "・一致あり" : ""}`;
+  return `ブランチ ${index + 1}${current}${matchedEnds.has(end) ? "・一致あり" : ""}`;
 }
 
 export function PreviewPane({
@@ -69,6 +67,7 @@ export function PreviewPane({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const branches = useMemo(() => createBranchIndex(record), [record]);
   const matched = useMemo(() => new Set(hit?.matchedNodeIds ?? []), [hit]);
+  const matchedEnds = useMemo(() => branches.endsThrough(matched), [branches, matched]);
   const ends = branches.ends;
   const [end, setEnd] = useState<string | null>(branches.defaultEnd);
   const branch = end === null ? null : branches.path(end);
@@ -109,7 +108,7 @@ export function PreviewPane({
           <select id={branchId} value={end ?? ""} onChange={(e) => setEnd(e.currentTarget.value)}>
             {ends.map((e, i) => (
               <option key={e} value={e}>
-                {branchLabel(branches, e, i, matched)}
+                {branchLabel(branches, e, i, matchedEnds)}
               </option>
             ))}
           </select>

@@ -22,6 +22,34 @@ export interface BranchIndex {
   readonly currentKnown: boolean;
   /** Root-to-`endId` path, or null when the node does not exist. */
   path(endId: string): Branch | null;
+  /** Ends whose path contains any of `nodeIds`, in one linear traversal (not one path per end). */
+  endsThrough(nodeIds: ReadonlySet<string>): Set<string>;
+}
+
+function leavesThrough(
+  record: ConversationRecord,
+  nodes: Map<string, ConversationNode>,
+  nodeIds: ReadonlySet<string>,
+): Set<string> {
+  const out = new Set<string>();
+  const stack: Array<[string, boolean]> = record.nodes
+    .filter((n) => n.parentId === null)
+    .map((n) => [n.id, false]);
+  while (stack.length > 0) {
+    const [id, above] = stack.pop() as [string, boolean];
+    const node = nodes.get(id);
+    if (node === undefined) {
+      continue;
+    }
+    const hit = above || nodeIds.has(id);
+    if (node.childIds.length === 0 && hit) {
+      out.add(id);
+    }
+    for (const child of node.childIds) {
+      stack.push([child, hit]);
+    }
+  }
+  return out;
 }
 
 function leavesInOrder(record: ConversationRecord, nodes: Map<string, ConversationNode>): string[] {
@@ -59,6 +87,26 @@ export function createBranchIndex(record: ConversationRecord): BranchIndex {
     ends,
     defaultEnd,
     currentKnown,
+    endsThrough(nodeIds) {
+      if (nodeIds.size === 0) {
+        return new Set();
+      }
+      const out = leavesThrough(record, nodes, nodeIds);
+      // A non-leaf current end: one walk up its own path.
+      if (currentKnown && !currentIsLeaf) {
+        let cursor = nodes.get(record.currentNodeId as string);
+        let steps = 0;
+        while (cursor !== undefined && steps <= nodes.size) {
+          if (nodeIds.has(cursor.id)) {
+            out.add(record.currentNodeId as string);
+            break;
+          }
+          cursor = cursor.parentId === null ? undefined : nodes.get(cursor.parentId);
+          steps++;
+        }
+      }
+      return out;
+    },
     path(endId) {
       const path: ConversationNode[] = [];
       let cursor = nodes.get(endId);

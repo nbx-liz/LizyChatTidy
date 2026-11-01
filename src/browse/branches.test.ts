@@ -60,6 +60,43 @@ describe("createBranchIndex", () => {
     expect(index.path("c149999")?.nodes.map((n) => n.id)).toEqual(["root", "c149999"]);
   });
 
+  it("finds the ends through matched nodes", () => {
+    expect([...branched.endsThrough(new Set(["u"]))]).toEqual(expect.arrayContaining(["a1", "a2"]));
+    expect([...branched.endsThrough(new Set(["a2"]))]).toEqual(["a2"]);
+    expect(branched.endsThrough(new Set())).toEqual(new Set());
+    const nonLeaf = createBranchIndex(record({ nodes: branchedNodes(), currentNodeId: "u" }));
+    expect(nonLeaf.endsThrough(new Set(["u"])).has("u")).toBe(true);
+    expect(nonLeaf.endsThrough(new Set(["a1"])).has("u")).toBe(false);
+  });
+
+  it("labels branches of a long shared prefix with many leaves in linear time (PR #7 review)", () => {
+    const prefix = 15_000;
+    const width = 15_000;
+    const msg = {
+      role: "user" as const,
+      createdAt: null,
+      text: "x",
+      contentCoverage: "complete" as const,
+    };
+    const leafIds = Array.from({ length: width }, (_, i) => `l${i}`);
+    const nodes: ConversationNode[] = [
+      ...Array.from({ length: prefix }, (_, i) => ({
+        id: `p${i}`,
+        parentId: i === 0 ? null : `p${i - 1}`,
+        childIds: i + 1 < prefix ? [`p${i + 1}`] : leafIds,
+        message: msg,
+      })),
+      ...leafIds.map((id) => ({ id, parentId: `p${prefix - 1}`, childIds: [], message: msg })),
+    ];
+    const index = createBranchIndex(record({ nodes, currentNodeId: "l0" }));
+    const started = performance.now();
+    const ends = index.endsThrough(new Set(["p0"]));
+    const elapsed = performance.now() - started;
+    expect(ends.size).toBe(width);
+    // A per-end path walk took about 6 s on this shape; a linear pass takes milliseconds.
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
   it("handles a very deep tree", () => {
     const depth = 50_000;
     const msg = {
