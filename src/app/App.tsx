@@ -1,8 +1,11 @@
 import { useState } from "react";
 import type { Provider } from "../shared/origins";
+import { Workspace } from "./browse/Workspace";
 import { chromeApi } from "./chromeApi";
 import { type ConnectResult, connect } from "./controller";
 import { ImportPanel } from "./ImportPanel";
+import { describeResult } from "./importLabels";
+import { useImportSession } from "./useImportSession";
 
 const PROVIDER_LABELS: Readonly<Record<Provider, string>> = {
   chatgpt: "ChatGPT",
@@ -31,6 +34,11 @@ function describe(state: ViewState): string {
 
 export function App({ targetTabId }: { readonly targetTabId: number | null }) {
   const [state, setState] = useState<ViewState>({ phase: "idle" });
+  const { session, controller } = useImportSession();
+  const result = session.result;
+  // Keep the import section open until there is something to browse, and
+  // whenever the latest import was not complete, so its issues stay in view.
+  const importOpen = session.running || result === null || result.status !== "complete";
 
   const onConnect = async () => {
     setState({ phase: "busy" });
@@ -38,17 +46,33 @@ export function App({ targetTabId }: { readonly targetTabId: number | null }) {
   };
 
   return (
-    <main>
-      <h1>LizyChatTidy</h1>
-      <p role="status">{describe(state)}</p>
-      <button
-        type="button"
-        onClick={onConnect}
-        disabled={"phase" in state && state.phase === "busy"}
-      >
-        対象のタブに接続
-      </button>
-      <ImportPanel />
+    <main className="app">
+      <header className="app-header">
+        <h1>LizyChatTidy</h1>
+        <button
+          type="button"
+          onClick={onConnect}
+          disabled={"phase" in state && state.phase === "busy"}
+        >
+          対象のタブに接続
+        </button>
+        <p role="status">{describe(state)}</p>
+      </header>
+      <details className="import-section" open={importOpen}>
+        <summary>
+          取り込み
+          {result !== null && !session.running && `: ${describeResult(result)}`}
+          {result !== null && result.issues.length > 0 && ` ・ 問題 ${result.issues.length} 件`}
+        </summary>
+        <ImportPanel session={session} controller={controller} />
+      </details>
+      {result === null || session.running ? (
+        <p className="empty">
+          まだ取り込んでいません。上の「取り込み」からエクスポートの ZIP を選んでください。
+        </p>
+      ) : (
+        <Workspace key={session.revision} records={result.records} revision={session.revision} />
+      )}
     </main>
   );
 }

@@ -13,7 +13,8 @@
     "check:dist": "node scripts/check-dist.mjs",
     "lint": "biome check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dev": "vite --mode app --host 127.0.0.1 --port 5173 --strictPort"
   },
   "dependencies": {
     "react": "19.3.0",
