@@ -95,6 +95,37 @@ describe("parseChatGptExport", () => {
       ]);
     });
 
+    it("drops a valid copy whose duplicate was rejected for its tree (DC2)", async () => {
+      const result = await run(
+        exportZip([conversation(ID_A), conversation(ID_A, { overrides: { mapping: [] } })]),
+      );
+      expect(result.records).toEqual([]);
+      expect(result.issues).toEqual([
+        { code: "duplicate-id", entry: "conversations.json[0]" },
+        { code: "invalid-tree", entry: "conversations.json[1]" },
+        { code: "duplicate-id", entry: "conversations.json[1]" },
+      ]);
+    });
+
+    it("lists malformed message content instead of reporting complete (DC1)", async () => {
+      const broken = conversation(ID_A, {
+        overrides: {
+          mapping: { m: { id: "m", parent: null, children: [], message: { content: null } } },
+          current_node: "m",
+        },
+      });
+      const result = await run(exportZip([broken]));
+      expect(result.status).toBe("partial");
+      expect(result.issues).toEqual([{ code: "invalid-content", entry: "conversations.json[0]" }]);
+      expect(canPlanDeletionFrom(result)).toBe(false);
+    });
+
+    it("ignores a BOM-prefixed name instead of reading it as conversations.json", async () => {
+      const result = await run(zipBlob(buildZip([{ name: "﻿conversations.json", data: "[]" }])));
+      expect(result.status).toBe("failed");
+      expect(result.issues).toEqual([{ code: "missing-conversations", entry: null }]);
+    });
+
     it("keeps valid conversations next to rejected ones", async () => {
       const result = await run(exportZip([conversation(ID_A), "junk", conversation(ID_C)]));
       expect(result.status).toBe("partial");

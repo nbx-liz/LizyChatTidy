@@ -124,8 +124,12 @@ function mapAll(
   report: ReportBuilder,
   guard: Guard,
 ): { records: ConversationRecord[]; issues: ImportIssue[] } {
-  const mapped: Array<{ index: number; record: ConversationRecord }> = [];
+  const mapped: Array<{ index: number; id: string | null; record: ConversationRecord | null }> = [];
   const issues: Array<{ index: number; issue: ImportIssue }> = [];
+  // Ids are counted over every identifiable conversation, including ones
+  // rejected later for their tree or content, so no copy of a repeated id
+  // survives because its twin failed validation.
+  const counts = new Map<string, number>();
   list.forEach((raw, index) => {
     if (index % CHECK_EVERY === 0) {
       guard.check();
@@ -134,20 +138,17 @@ function mapAll(
     for (const issue of result.issues) {
       issues.push({ index, issue });
     }
-    if (result.record !== null) {
-      mapped.push({ index, record: result.record });
+    if (result.id !== null) {
+      counts.set(result.id, (counts.get(result.id) ?? 0) + 1);
     }
+    mapped.push({ index, id: result.id, record: result.record });
   });
   // A repeated id is ambiguous: no copy is kept, and every copy is listed.
-  const counts = new Map<string, number>();
-  for (const { record } of mapped) {
-    counts.set(record.conversationId, (counts.get(record.conversationId) ?? 0) + 1);
-  }
   const records: ConversationRecord[] = [];
-  for (const { index, record } of mapped) {
-    if ((counts.get(record.conversationId) ?? 0) > 1) {
+  for (const { index, id, record } of mapped) {
+    if (id !== null && (counts.get(id) ?? 0) > 1) {
       issues.push({ index, issue: { code: "duplicate-id", entry: `${CONVERSATIONS}[${index}]` } });
-    } else {
+    } else if (record !== null) {
       records.push(record);
     }
   }
@@ -185,7 +186,7 @@ export async function parseChatGptExport(
     if (conversationsEntry === null) {
       throw new ImportFailure("missing-conversations");
     }
-    const bytes = await readEntry(file, dir, conversationsEntry, guard);
+    const bytes = await readEntry(file, conversationsEntry, guard);
     report.conversationsUncompressedBytes = bytes.length;
     const parsed = decodeJson(bytes, guard);
     if (!Array.isArray(parsed)) {

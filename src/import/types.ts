@@ -57,6 +57,7 @@ export type ItemCode =
   | "duplicate-id"
   | "invalid-field"
   | "invalid-time"
+  | "invalid-content"
   | "invalid-tree";
 
 export type ImportIssueCode = FatalCode | ItemCode | "cancelled";
@@ -159,6 +160,7 @@ export interface StructureReport {
   readonly messageKeys: Readonly<Record<string, number>>;
   readonly contentTypes: Readonly<Record<string, number>>;
   readonly roles: Readonly<Record<string, number>>;
+  readonly messageCoverage: Readonly<Record<string, number>>;
   readonly nodeCount: number;
   readonly leafCount: number;
   readonly maxTreeDepth: number;

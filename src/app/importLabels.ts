@@ -35,6 +35,7 @@ export const ISSUE_LABELS: Readonly<Record<ImportIssueCode, string>> = {
   "invalid-field": "項目の型が想定外です（不明として扱います）",
   "invalid-time": "日時の値が想定外です（日時不明として扱います）",
   "invalid-tree": "会話の分岐構造が壊れています",
+  "invalid-content": "メッセージ本文の形式が想定外です（本文の一部を取り込めていません）",
 };
 
 const STATUS_LABELS: Readonly<Record<ImportResult["status"], string>> = {

@@ -4,18 +4,31 @@
 // loaded, through Blob.slice. Inflation uses the platform's
 // DecompressionStream("deflate-raw"), with output bytes counted as they
 // arrive: declared sizes are never trusted to bound memory.
+//
+// Layout rules (each violation fails):
+// - exactly one end-of-central-directory record whose comment ends at the end
+//   of the file; no ZIP64, no multi-disk;
+// - the central directory ends exactly at that record and is fully consumed;
+// - local records start at offset 0, in increasing order, and no record's
+//   minimum extent reaches the next record or the directory;
+// - a record that is read must match the directory exactly: name bytes,
+//   flags, method, and CRC/sizes (in the local header, or in the data
+//   descriptor when flag bit 3 is set), and must end before the next record.
 import { crc32Update } from "./crc32";
 import { type Guard, ImportFailure } from "./guard";
 
 export interface ZipEntry {
   /** Null when the name is not valid UTF-8 / ASCII; such an entry is never selected. */
   readonly name: string | null;
+  readonly nameBytes: Uint8Array;
   readonly flags: number;
   readonly method: number;
   readonly crc: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
   readonly localHeaderOffset: number;
+  /** Where the next record (or the central directory) starts; this one must end before it. */
+  readonly recordLimit: number;
 }
 
 export interface ZipDirectory {
@@ -28,11 +41,15 @@ const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
 const SIG_ZIP64_LOCATOR = 0x07064b50;
+const SIG_DESCRIPTOR = 0x08074b50;
 const EOCD_SIZE = 22;
 const MAX_COMMENT = 0xffff;
 const CENTRAL_HEADER_SIZE = 46;
 const LOCAL_HEADER_SIZE = 30;
+const MARKER_32 = 0xffffffff;
+const MARKER_16 = 0xffff;
 const FLAG_ENCRYPTED = 0x0001;
+const FLAG_DESCRIPTOR = 0x0008;
 const FLAG_STRONG_ENCRYPTION = 0x0040;
 const FLAG_UTF8 = 0x0800;
 
@@ -44,21 +61,29 @@ async function slice(file: Blob, start: number, end: number): Promise<DataView> 
   return new DataView(buffer);
 }
 
+/**
+ * The EOCD is a record whose comment ends exactly at the end of the file.
+ * Two such records (for example a second directory hidden in the comment)
+ * make the archive ambiguous, so it fails rather than picking one.
+ */
 function findEndRecord(tail: DataView): number | null {
-  // The EOCD is accepted only where its comment length ends exactly at the end
-  // of the file, so a signature inside the comment cannot be mistaken for it.
+  let found: number | null = null;
   for (let pos = tail.byteLength - EOCD_SIZE; pos >= 0; pos--) {
     if (
       tail.getUint32(pos, true) === SIG_EOCD &&
       pos + EOCD_SIZE + tail.getUint16(pos + 20, true) === tail.byteLength
     ) {
-      return pos;
+      if (found !== null) {
+        throw new ImportFailure("zip-bad-directory");
+      }
+      found = pos;
     }
   }
-  return null;
+  return found;
 }
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+// ignoreBOM keeps a leading U+FEFF in the name, so it never matches a known name.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function decodeName(bytes: Uint8Array, flags: number): string | null {
   if ((flags & FLAG_UTF8) === 0 && bytes.some((b) => b >= 0x80)) {
@@ -69,6 +94,10 @@ function decodeName(bytes: Uint8Array, flags: number): string | null {
   } catch {
     return null; // Invalid UTF-8: kept as an unnamed entry, reported by the caller.
   }
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
 export async function readZipDirectory(file: Blob, guard: Guard): Promise<ZipDirectory> {
@@ -94,7 +123,7 @@ export async function readZipDirectory(file: Blob, guard: Guard): Promise<ZipDir
   const total = tail.getUint16(rel + 10, true);
   const cdSize = tail.getUint32(rel + 12, true);
   const cdOffset = tail.getUint32(rel + 16, true);
-  if (total === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
+  if (total === MARKER_16 || cdSize === MARKER_32 || cdOffset === MARKER_32) {
     throw new ImportFailure("zip-zip64");
   }
   if (disk !== 0 || cdDisk !== 0 || onDisk !== total) {
@@ -108,9 +137,15 @@ export async function readZipDirectory(file: Blob, guard: Guard): Promise<ZipDir
   }
   guard.check();
   const cd = await slice(file, cdOffset, cdOffset + cdSize);
-  const entries = parseCentralDirectory(cd, total);
+  const parsed = parseCentralDirectory(cd, total);
+  rejectDuplicateNames(parsed);
+  return { entries: placeRecords(parsed, cdOffset), directoryOffset: cdOffset };
+}
+
+type ParsedEntry = Omit<ZipEntry, "recordLimit">;
+
+function rejectDuplicateNames(entries: readonly ParsedEntry[]): void {
   const names = new Set<string>();
-  let firstOffset = cdOffset;
   for (const entry of entries) {
     if (entry.name !== null) {
       if (names.has(entry.name)) {
@@ -118,20 +153,41 @@ export async function readZipDirectory(file: Blob, guard: Guard): Promise<ZipDir
       }
       names.add(entry.name);
     }
-    if (entry.localHeaderOffset >= cdOffset) {
-      throw new ImportFailure("zip-bad-directory", entry.name);
-    }
-    firstOffset = Math.min(firstOffset, entry.localHeaderOffset);
   }
-  if (firstOffset !== 0) {
-    // Data before the first entry (for example a self-extractor stub).
-    throw new ImportFailure("zip-unsupported-layout");
-  }
-  return { entries, directoryOffset: cdOffset };
 }
 
-function parseCentralDirectory(cd: DataView, total: number): ZipEntry[] {
-  const entries: ZipEntry[] = [];
+/** Orders records by offset and rejects prefixed data and overlapping minimum extents. */
+function placeRecords(entries: readonly ParsedEntry[], cdOffset: number): ZipEntry[] {
+  const order = entries
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const ea = entries[a] as ParsedEntry;
+      const eb = entries[b] as ParsedEntry;
+      return ea.localHeaderOffset - eb.localHeaderOffset;
+    });
+  const limits = new Array<number>(entries.length);
+  let expectedFirst = true;
+  for (let k = 0; k < order.length; k++) {
+    const entry = entries[order[k] as number] as ParsedEntry;
+    const next = order[k + 1];
+    const limit = next === undefined ? cdOffset : (entries[next] as ParsedEntry).localHeaderOffset;
+    if (expectedFirst && entry.localHeaderOffset !== 0) {
+      // Data before the first record (for example a self-extractor stub).
+      throw new ImportFailure("zip-unsupported-layout");
+    }
+    expectedFirst = false;
+    const minimumEnd =
+      entry.localHeaderOffset + LOCAL_HEADER_SIZE + entry.nameBytes.length + entry.compressedSize;
+    if (minimumEnd > limit) {
+      throw new ImportFailure("zip-bad-directory", entry.name);
+    }
+    limits[order[k] as number] = limit;
+  }
+  return entries.map((entry, i) => ({ ...entry, recordLimit: limits[i] as number }));
+}
+
+function parseCentralDirectory(cd: DataView, total: number): ParsedEntry[] {
+  const entries: ParsedEntry[] = [];
   let pos = 0;
   for (let i = 0; i < total; i++) {
     if (pos + CENTRAL_HEADER_SIZE > cd.byteLength || cd.getUint32(pos, true) !== SIG_CENTRAL) {
@@ -152,23 +208,21 @@ function parseCentralDirectory(cd: DataView, total: number): ZipEntry[] {
       throw new ImportFailure("zip-bad-directory");
     }
     if (
-      compressedSize === 0xffffffff ||
-      uncompressedSize === 0xffffffff ||
-      localHeaderOffset === 0xffffffff ||
-      diskStart === 0xffff
+      compressedSize === MARKER_32 ||
+      uncompressedSize === MARKER_32 ||
+      localHeaderOffset === MARKER_32 ||
+      diskStart === MARKER_16
     ) {
       throw new ImportFailure("zip-zip64");
     }
     if (diskStart !== 0) {
       throw new ImportFailure("zip-multi-disk");
     }
-    const nameBytes = new Uint8Array(
-      cd.buffer,
-      cd.byteOffset + pos + CENTRAL_HEADER_SIZE,
-      nameLength,
-    );
+    const start = cd.byteOffset + pos + CENTRAL_HEADER_SIZE;
+    const nameBytes = new Uint8Array(cd.buffer.slice(start, start + nameLength));
     entries.push({
       name: decodeName(nameBytes, flags),
+      nameBytes,
       flags,
       method,
       crc,
@@ -184,40 +238,81 @@ function parseCentralDirectory(cd: DataView, total: number): ZipEntry[] {
   return entries;
 }
 
-/** Locates an entry's compressed bytes after checking its local header. */
-async function dataRange(
-  file: Blob,
-  dir: ZipDirectory,
+function checkSizes(
   entry: ZipEntry,
-): Promise<[number, number]> {
+  crc: number,
+  compressed: number,
+  uncompressed: number,
+  label: string | null,
+): void {
+  if (compressed === MARKER_32 || uncompressed === MARKER_32) {
+    throw new ImportFailure("zip-zip64", label);
+  }
+  if (crc !== entry.crc || compressed !== entry.compressedSize) {
+    throw new ImportFailure("zip-local-header-mismatch", label);
+  }
+  if (uncompressed !== entry.uncompressedSize) {
+    throw new ImportFailure("zip-local-header-mismatch", label);
+  }
+}
+
+/** Reads and checks the data descriptor that follows the data when flag bit 3 is set. */
+async function checkDescriptor(file: Blob, entry: ZipEntry, dataEnd: number): Promise<void> {
+  const label = entry.name;
+  if (dataEnd + 12 > entry.recordLimit) {
+    throw new ImportFailure("zip-truncated", label);
+  }
+  const signed = dataEnd + 16 <= entry.recordLimit;
+  const view = await slice(file, dataEnd, dataEnd + (signed ? 16 : 12));
+  const base = signed && view.getUint32(0, true) === SIG_DESCRIPTOR ? 4 : 0;
+  if (base === 0 && view.getUint32(0, true) === SIG_DESCRIPTOR && !signed) {
+    throw new ImportFailure("zip-truncated", label);
+  }
+  checkSizes(
+    entry,
+    view.getUint32(base, true),
+    view.getUint32(base + 4, true),
+    view.getUint32(base + 8, true),
+    label,
+  );
+}
+
+/** Locates an entry's compressed bytes after checking its local record against the directory. */
+async function dataRange(file: Blob, entry: ZipEntry): Promise<[number, number]> {
   const label = entry.name;
   const offset = entry.localHeaderOffset;
-  if (offset + LOCAL_HEADER_SIZE > dir.directoryOffset) {
+  const nameEnd = offset + LOCAL_HEADER_SIZE + entry.nameBytes.length;
+  if (nameEnd > entry.recordLimit) {
     throw new ImportFailure("zip-truncated", label);
   }
-  const header = await slice(file, offset, offset + LOCAL_HEADER_SIZE);
-  if (header.getUint32(0, true) !== SIG_LOCAL) {
-    throw new ImportFailure("zip-local-header-mismatch", label);
-  }
-  const method = header.getUint16(8, true);
+  const header = await slice(file, offset, nameEnd);
+  const flags = header.getUint16(6, true);
   const nameLength = header.getUint16(26, true);
-  const extraLength = header.getUint16(28, true);
-  const nameStart = offset + LOCAL_HEADER_SIZE;
-  if (nameStart + nameLength > dir.directoryOffset) {
-    throw new ImportFailure("zip-truncated", label);
-  }
-  const nameView = await slice(file, nameStart, nameStart + nameLength);
-  const localName = decodeName(
-    new Uint8Array(nameView.buffer),
-    header.getUint16(6, true) | (entry.flags & FLAG_UTF8),
-  );
-  if (method !== entry.method || localName !== entry.name) {
+  const localName = new Uint8Array(header.buffer, LOCAL_HEADER_SIZE, entry.nameBytes.length);
+  if (
+    header.getUint32(0, true) !== SIG_LOCAL ||
+    flags !== entry.flags ||
+    header.getUint16(8, true) !== entry.method ||
+    nameLength !== entry.nameBytes.length ||
+    !sameBytes(localName, entry.nameBytes)
+  ) {
     throw new ImportFailure("zip-local-header-mismatch", label);
   }
-  const start = nameStart + nameLength + extraLength;
+  const crc = header.getUint32(14, true);
+  const compressed = header.getUint32(18, true);
+  const uncompressed = header.getUint32(22, true);
+  const deferred =
+    (flags & FLAG_DESCRIPTOR) !== 0 && crc === 0 && compressed === 0 && uncompressed === 0;
+  if (!deferred) {
+    checkSizes(entry, crc, compressed, uncompressed, label);
+  }
+  const start = nameEnd + header.getUint16(28, true);
   const end = start + entry.compressedSize;
-  if (end > dir.directoryOffset) {
+  if (end > entry.recordLimit) {
     throw new ImportFailure("zip-truncated", label);
+  }
+  if ((flags & FLAG_DESCRIPTOR) !== 0) {
+    await checkDescriptor(file, entry, end);
   }
   return [start, end];
 }
@@ -226,12 +321,7 @@ async function dataRange(
  * Reads and verifies one entry. The output is capped by both the declared
  * size and the guard's remaining budget; exceeding either stops inflation.
  */
-export async function readEntry(
-  file: Blob,
-  dir: ZipDirectory,
-  entry: ZipEntry,
-  guard: Guard,
-): Promise<Uint8Array> {
+export async function readEntry(file: Blob, entry: ZipEntry, guard: Guard): Promise<Uint8Array> {
   const label = entry.name;
   if ((entry.flags & (FLAG_ENCRYPTED | FLAG_STRONG_ENCRYPTION)) !== 0) {
     throw new ImportFailure("zip-encrypted", label);
@@ -246,7 +336,7 @@ export async function readEntry(
     throw new ImportFailure("zip-size-mismatch", label);
   }
   guard.check();
-  const [start, end] = await dataRange(file, dir, entry);
+  const [start, end] = await dataRange(file, entry);
   const raw = file.slice(start, end).stream();
   const stream = entry.method === 8 ? raw.pipeThrough(new DecompressionStream("deflate-raw")) : raw;
   const out = await collect(stream, entry, guard);
@@ -290,6 +380,7 @@ async function collect(
       chunks.push(next.value);
     }
   } catch (error) {
+    // Release the stream; the original failure is what the caller reports.
     await reader.cancel().catch(() => undefined);
     throw error;
   }

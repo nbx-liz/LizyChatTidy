@@ -305,7 +305,7 @@ describe("mapConversation", () => {
     expect(JSON.stringify(stats)).not.toMatch(/Private title|Synthetic|answer|6a1f0c2e/);
   });
 
-  it("counts keys and roles named after Object.prototype members as numbers (DC2)", () => {
+  it("buckets keys and roles named after Object.prototype members as numbers (DC2)", () => {
     const stats = newShapeStats();
     const raw = conversation(ID_A, { overrides: { constructor: 1, valueOf: 2 } });
     const mapping = raw["mapping"] as Record<string, { message: Record<string, unknown> }>;
@@ -313,16 +313,70 @@ describe("mapConversation", () => {
       message: Record<string, unknown>;
     };
     mapConversation(raw, 0, OBSERVED, stats);
-    expect(stats.conversationKeys["constructor"]).toBe(1);
-    expect(stats.roles["constructor"]).toBe(1);
+    expect(stats.conversationKeys["(other)"]).toBe(2);
+    expect(stats.roles["(other)"]).toBe(1);
     expect(typeof stats.roles["user"]).toBe("number");
     expect(Object.values(stats.conversationKeys).every((v) => typeof v === "number")).toBe(true);
   });
 
-  it("buckets key names and values that do not look like schema tokens", () => {
+  it("reports only fixed-vocabulary tokens, so schema-shaped strings do not leak (INV-03)", () => {
     const stats = newShapeStats();
-    mapConversation(conversation(ID_A, { overrides: { "My secret note": 1 } }), 0, OBSERVED, stats);
-    expect(stats.conversationKeys["(other)"]).toBe(1);
-    expect(JSON.stringify(stats)).not.toContain("secret");
+    const raw = conversation(ID_A, {
+      overrides: { "My secret note": 1, "private-title": 2, private_account: 3 },
+    });
+    const mapping = raw["mapping"] as Record<string, Record<string, unknown>>;
+    mapping["a1"] = {
+      ...mapping["a1"],
+      message: message("private-role", "x", {
+        content: { content_type: "private-message", parts: [] },
+        private_key: true,
+      }),
+    };
+    mapConversation(raw, 0, OBSERVED, stats);
+    expect(stats.conversationKeys["(other)"]).toBe(3);
+    expect(stats.roles["(other)"]).toBe(1);
+    expect(stats.contentTypes["(other)"]).toBe(1);
+    expect(stats.messageKeys["(other)"]).toBe(1);
+    expect(JSON.stringify(stats)).not.toMatch(/secret|private/);
+  });
+
+  it("reports schema-shaped strings of rejected conversations as (other) too", () => {
+    const stats = newShapeStats();
+    mapConversation({ id: "not-a-uuid", "private-title": 1 }, 0, OBSERVED, stats);
+    expect(JSON.stringify(stats)).not.toContain("private");
+  });
+
+  describe("malformed content is listed (DC1)", () => {
+    function contentIssues(content: unknown): string[] {
+      const raw = conversation(ID_A, {
+        overrides: {
+          mapping: {
+            m: { id: "m", parent: null, children: [], message: message("user", "", { content }) },
+          },
+          current_node: "m",
+        },
+      });
+      return map(raw).issues.map((i) => i.code);
+    }
+
+    const malformed: ReadonlyArray<[string, unknown]> = [
+      ["null content", null],
+      ["content that is not an object", "text"],
+      ["a missing content_type", { parts: ["x"] }],
+      ["text with non-array parts", { content_type: "text", parts: "x" }],
+      ["text with a non-string part", { content_type: "text", parts: ["x", 1] }],
+      ["multimodal text with a non-object part", { content_type: "multimodal_text", parts: [1] }],
+      ["code with numeric text", { content_type: "code", text: 5 }],
+    ];
+
+    for (const [label, content] of malformed) {
+      it(`lists ${label}`, () => {
+        expect(contentIssues(content)).toEqual(["invalid-content"]);
+      });
+    }
+
+    it("does not list a known non-text content type, but marks it uncovered", () => {
+      expect(contentIssues({ content_type: "thoughts", thoughts: [] })).toEqual([]);
+    });
   });
 });

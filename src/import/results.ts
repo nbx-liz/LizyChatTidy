@@ -35,6 +35,7 @@ export function emptyReport(): StructureReport {
     messageKeys: newCounter(),
     contentTypes: newCounter(),
     roles: newCounter(),
+    messageCoverage: newCounter(),
     nodeCount: 0,
     leafCount: 0,
     maxTreeDepth: 0,

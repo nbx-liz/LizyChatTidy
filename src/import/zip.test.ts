@@ -30,7 +30,7 @@ async function readNamed(bytes: Uint8Array, name: string, limits = LIMITS): Prom
   if (entry === undefined) {
     throw new Error("entry not found");
   }
-  return new TextDecoder().decode(await readEntry(blob, dir, entry, g));
+  return new TextDecoder().decode(await readEntry(blob, entry, g));
 }
 
 describe("readZipDirectory", () => {
@@ -167,7 +167,7 @@ describe("readEntry", () => {
     [
       "compressed data that runs into the central directory",
       [{ name: "t", data: "hello", compressedSize: 4000 }],
-      "zip-truncated",
+      "zip-bad-directory",
     ],
   ];
 
@@ -204,6 +204,6 @@ describe("readEntry", () => {
       throw new Error("entry missing");
     }
     controller.abort();
-    expect(await failureCode(readEntry(blob, dir, entry, g))).toBe("cancelled");
+    expect(await failureCode(readEntry(blob, entry, g))).toBe("cancelled");
   });
 });

@@ -14,12 +14,21 @@ export interface FixtureEntry {
   readonly compressedSize?: number;
   /** Write a different name into the local header than into the directory. */
   readonly localName?: string;
+  /** Override local-header fields only. */
+  readonly localFlags?: number;
+  readonly localCrc?: number;
+  readonly localCompressedSize?: number;
+  readonly localUncompressedSize?: number;
+  /** Write a data descriptor after the data (sets flag bit 3, zeroes local CRC/sizes). */
+  readonly descriptor?: "signed" | "unsigned";
   /** Truncate the stored compressed data to this many bytes. */
   readonly truncateTo?: number;
+  /** Point the directory at another offset than where the record was written. */
+  readonly directoryOffset?: number;
 }
 
 export interface FixtureOptions {
-  readonly comment?: string;
+  readonly comment?: string | Uint8Array;
   readonly prefix?: Uint8Array;
   readonly diskNumber?: number;
   readonly totalEntriesOverride?: number;
@@ -64,6 +73,83 @@ class Writer {
   }
 }
 
+interface Prepared {
+  readonly entry: FixtureEntry;
+  readonly stored: Uint8Array;
+  readonly crc: number;
+  readonly usize: number;
+  readonly csize: number;
+  readonly flags: number;
+  readonly method: number;
+}
+
+function prepare(entry: FixtureEntry): Prepared {
+  const raw = toBytes(entry.data);
+  const method = entry.method ?? 8;
+  const deflated = method === 8 ? new Uint8Array(deflateRawSync(raw)) : raw;
+  const stored = entry.truncateTo === undefined ? deflated : deflated.subarray(0, entry.truncateTo);
+  const base = entry.flags ?? 0x0800;
+  return {
+    entry,
+    stored,
+    crc: entry.crc ?? crc32(raw),
+    usize: entry.uncompressedSize ?? raw.length,
+    csize: entry.compressedSize ?? stored.length,
+    flags: entry.descriptor === undefined ? base : base | 0x0008,
+    method,
+  };
+}
+
+function writeLocal(w: Writer, p: Prepared): void {
+  const { entry } = p;
+  const zeroed = entry.descriptor !== undefined;
+  const localName = encoder.encode(entry.localName ?? entry.name);
+  w.u32(0x04034b50);
+  w.u16(20);
+  w.u16(entry.localFlags ?? p.flags);
+  w.u16(p.method);
+  w.u16(0);
+  w.u16(0x21);
+  w.u32(entry.localCrc ?? (zeroed ? 0 : p.crc));
+  w.u32(entry.localCompressedSize ?? (zeroed ? 0 : p.csize));
+  w.u32(entry.localUncompressedSize ?? (zeroed ? 0 : p.usize));
+  w.u16(localName.length);
+  w.u16(0);
+  w.bytes(localName);
+  w.bytes(p.stored);
+  if (entry.descriptor === "signed") {
+    w.u32(0x08074b50);
+  }
+  if (zeroed) {
+    w.u32(p.crc);
+    w.u32(p.csize);
+    w.u32(p.usize);
+  }
+}
+
+function writeCentral(central: Writer, p: Prepared, offset: number): void {
+  const name = encoder.encode(p.entry.name);
+  central.u32(0x02014b50);
+  central.u16(20);
+  central.u16(20);
+  central.u16(p.flags);
+  central.u16(p.method);
+  central.u16(0);
+  central.u16(0x21);
+  central.u32(p.crc);
+  central.u32(p.csize);
+  central.u32(p.usize);
+  central.u16(name.length);
+  central.u16(0);
+  central.u16(0);
+  central.u16(0);
+  central.u16(0);
+  central.u32(0);
+  central.u32(p.entry.directoryOffset ?? offset);
+  central.bytes(name);
+}
+
+/** Central directory plus EOCD for `entries`, as `buildZip` writes them. */
 export function buildZip(
   entries: readonly FixtureEntry[],
   options: FixtureOptions = {},
@@ -74,51 +160,10 @@ export function buildZip(
   }
   const central = new Writer();
   for (const entry of entries) {
-    const raw = toBytes(entry.data);
-    const method = entry.method ?? 8;
-    const deflated = method === 8 ? new Uint8Array(deflateRawSync(raw)) : raw;
-    const stored =
-      entry.truncateTo === undefined ? deflated : deflated.subarray(0, entry.truncateTo);
-    const crc = entry.crc ?? crc32(raw);
-    const usize = entry.uncompressedSize ?? raw.length;
-    const csize = entry.compressedSize ?? stored.length;
-    const flags = entry.flags ?? 0x0800;
-    const name = encoder.encode(entry.name);
-    const localName = encoder.encode(entry.localName ?? entry.name);
+    const p = prepare(entry);
     const offset = w.length;
-
-    w.u32(0x04034b50);
-    w.u16(20);
-    w.u16(flags);
-    w.u16(method);
-    w.u16(0);
-    w.u16(0x21);
-    w.u32(crc);
-    w.u32(csize);
-    w.u32(usize);
-    w.u16(localName.length);
-    w.u16(0);
-    w.bytes(localName);
-    w.bytes(stored);
-
-    central.u32(0x02014b50);
-    central.u16(20);
-    central.u16(20);
-    central.u16(flags);
-    central.u16(method);
-    central.u16(0);
-    central.u16(0x21);
-    central.u32(crc);
-    central.u32(csize);
-    central.u32(usize);
-    central.u16(name.length);
-    central.u16(0);
-    central.u16(0);
-    central.u16(0);
-    central.u16(0);
-    central.u32(0);
-    central.u32(offset);
-    central.bytes(name);
+    writeLocal(w, p);
+    writeCentral(central, p, offset);
   }
   const cdOffset = w.length;
   const cd = central.concat();
@@ -130,7 +175,8 @@ export function buildZip(
     w.u32(0);
     w.u32(1);
   }
-  const comment = encoder.encode(options.comment ?? "");
+  const comment =
+    options.comment instanceof Uint8Array ? options.comment : encoder.encode(options.comment ?? "");
   const total = options.totalEntriesOverride ?? entries.length;
   w.u32(0x06054b50);
   w.u16(options.diskNumber ?? 0);
