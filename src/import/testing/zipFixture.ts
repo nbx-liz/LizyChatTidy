@@ -33,6 +33,8 @@ export interface FixtureOptions {
   readonly diskNumber?: number;
   readonly totalEntriesOverride?: number;
   readonly zip64Locator?: boolean;
+  /** Raw bytes written after the last record, before the central directory. */
+  readonly beforeDirectory?: Uint8Array;
 }
 
 const encoder = new TextEncoder();
@@ -164,6 +166,9 @@ export function buildZip(
     const offset = w.length;
     writeLocal(w, p);
     writeCentral(central, p, offset);
+  }
+  if (options.beforeDirectory !== undefined) {
+    w.bytes(options.beforeDirectory);
   }
   const cdOffset = w.length;
   const cd = central.concat();
