@@ -92,6 +92,36 @@ interface Session {
 
 type Locked<T> = T | "lock-timeout" | "lock-unavailable" | "read-failed" | "superseded";
 
+/** entries, revision, storeId and generation read together (P-0009 item 8). */
+export interface KeepBinding {
+  readonly entries: readonly KeepEntry[];
+  readonly revision: number;
+  readonly storeId: string;
+  readonly generation: number;
+}
+
+export type OrderedKeepView =
+  | ({ readonly status: "available" } & KeepBinding)
+  | {
+      readonly status: "not-available";
+      readonly reason:
+        | "state"
+        | "conflict"
+        | "superseded"
+        | "lock-timeout"
+        | "lock-unavailable"
+        | "read-failed";
+    };
+
+/** A frozen copy, so a caller of binding() or withOrderedSnapshot() cannot change the session. */
+function frozenEntries(entries: readonly KeepEntry[]): readonly KeepEntry[] {
+  return Object.freeze(
+    entries.map((e) =>
+      Object.freeze({ ...e, scope: e.scope === null ? null : Object.freeze({ ...e.scope }) }),
+    ),
+  );
+}
+
 export class KeepStore {
   private state: KeepState = { status: "loading" };
   private generation = 0;
@@ -369,6 +399,68 @@ export class KeepStore {
     });
   }
 
+  /**
+   * The authenticated session's KEEP state, read together; null unless the
+   * store is available with a session (lock() drops the session before it
+   * publishes locked, so this is null in that window) (P-0009 item 8).
+   */
+  binding(): KeepBinding | null {
+    const s = this.session;
+    if (this.state.status !== "available" || s === null) {
+      return null;
+    }
+    return {
+      entries: frozenEntries(s.entries),
+      revision: s.envelope.revision,
+      storeId: s.envelope.storeId,
+      generation: this.generation,
+    };
+  }
+
+  /**
+   * Runs the synchronous `fn` inside this store's serial queue and the KEEP
+   * Web Lock, after re-reading the stored envelope and confirming it is the
+   * authenticated one and the generation is unchanged, so no KEEP write of
+   * this tab or another one lands between this read and what `fn` does.
+   * `fn` must not await: the queue and the lock are released when it returns
+   * (P-0009 item 8). It is called exactly once.
+   */
+  async withOrderedSnapshot<T>(fn: (view: OrderedKeepView) => T): Promise<T> {
+    return this.serial(async () => {
+      const gen = this.generation;
+      const s = this.session;
+      if (this.state.status !== "available" || s === null) {
+        return fn({ status: "not-available", reason: "state" });
+      }
+      const expected = envelopeToken(s.envelope);
+      let ran: { value: T } | null = null;
+      const outcome = await this.underLock(gen, async (now) => {
+        if (now.kind !== "envelope" || now.token !== expected) {
+          return "conflict" as const;
+        }
+        ran = {
+          value: fn({
+            status: "available",
+            entries: frozenEntries(s.entries),
+            revision: s.envelope.revision,
+            storeId: s.envelope.storeId,
+            generation: gen,
+          }),
+        };
+        return "ok" as const;
+      });
+      if (ran !== null) {
+        return (ran as { value: T }).value;
+      }
+      if (outcome === "conflict" || outcome === "read-failed" || outcome === "lock-unavailable") {
+        this.failIf(gen, outcome);
+      }
+      // A lock timeout leaves the store as it is (P-0009 item 8).
+      const reason = outcome === "ok" ? "superseded" : outcome;
+      return fn({ status: "not-available", reason });
+    });
+  }
+
   /** Deletes the stored envelope only if it is still the one the user confirmed. */
   async deleteStore(confirmedToken: string | null): Promise<OpResult> {
     if (!this.restricted || this.state.status === "loading") {
@@ -522,10 +614,14 @@ export class KeepStore {
     return this.failIf(gen, outcome);
   }
 
-  private become(gen: number, session: Session): boolean {
+  private become(gen: number, incoming: Session): boolean {
     if (gen !== this.generation) {
       return false;
     }
+    // The published state and the session share one deep-frozen entry list,
+    // so no caller holding `current.entries` can remove a KEEP from the
+    // session that later bindings and writes read (PR #10 review sweep).
+    const session: Session = { ...incoming, entries: frozenEntries(incoming.entries) };
     this.session = session;
     this.checkpoint = { storeId: session.envelope.storeId, revision: session.envelope.revision };
     this.observed = {
