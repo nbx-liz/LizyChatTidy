@@ -1,54 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
-import { startImport, type WorkerLike } from "../import/client";
-import { ImportController, type ImportSession } from "../import/controller";
+import type { ImportController, ImportSession } from "../import/controller";
 import { canPlanDeletionFrom } from "../import/results";
-import { DEFAULT_IMPORT_LIMITS } from "../import/types";
 import { describeResult, ISSUE_LABELS } from "./importLabels";
 
 const MAX_LISTED_ISSUES = 200;
 
-function createWorker(): WorkerLike {
-  const worker = new Worker(new URL("../import/worker.ts", import.meta.url), { type: "module" });
-  const like: WorkerLike = {
-    onmessage: null,
-    onerror: null,
-    postMessage: (message) => worker.postMessage(message),
-    terminate: () => worker.terminate(),
-  };
-  worker.onmessage = (event) => like.onmessage?.({ data: event.data });
-  worker.onerror = (event) => like.onerror?.(event);
-  worker.onmessageerror = (event) => like.onerror?.(event);
-  return like;
-}
-
-const browserTimers = {
-  set: (fn: () => void, ms: number) => window.setTimeout(fn, ms),
-  clear: (id: number) => window.clearTimeout(id),
-};
-
 /**
  * Official ChatGPT export import (DEV05). Shows status, counts, listed issues
- * and the shape-only structure report; conversation content is shown by DEV07.
+ * and the shape-only structure report; conversation content is shown by the
+ * workspace (DEV07).
  */
-export function ImportPanel() {
-  const [session, setSession] = useState<ImportSession>({
-    revision: 0,
-    result: null,
-    running: false,
-  });
-  const controller = useMemo(
-    () =>
-      new ImportController(
-        (file) => startImport(file, DEFAULT_IMPORT_LIMITS, createWorker, browserTimers),
-        setSession,
-      ),
-    [],
-  );
-  useEffect(() => () => controller.cancel(), [controller]);
-
+export function ImportPanel({
+  session,
+  controller,
+}: {
+  readonly session: ImportSession;
+  readonly controller: ImportController;
+}) {
   const result = session.result;
   return (
-    <section aria-labelledby="import-heading">
+    <section aria-labelledby="import-heading" className="import-panel">
       <h2 id="import-heading">ChatGPT の公式エクスポートを取り込む</h2>
       <p>
         ファイルはこの端末の中だけで読み取ります。外部へは送信しません。本文は保存せず、この画面を閉じると消えます。
