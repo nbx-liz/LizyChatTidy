@@ -10,6 +10,8 @@ export class FakeArea {
   readonly listeners = new Set<(key: string, newValue: unknown) => void>();
   notify = true;
   failGet = false;
+  /** When set, get() waits for this promise before reading. */
+  getGate: Promise<void> | null = null;
   failSet = false;
   failRemove = false;
   /** When set, set() waits for this promise before writing. */
@@ -21,6 +23,9 @@ export class FakeArea {
     const area: StorageAreaLike = {
       get: async (key) => {
         this.getCalls++;
+        if (this.getGate !== null) {
+          await this.getGate;
+        }
         if (this.failGet) {
           throw new Error("get failed");
         }

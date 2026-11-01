@@ -158,15 +158,47 @@ export class KeepStore {
     return "ok";
   }
 
-  /** Accepts a regressed or replaced store the user chose to use (P-0007 item 8). */
+  /**
+   * Accepts the regressed or replaced envelope the user saw (P-0007 item 8).
+   * Bound to that envelope and to the generation: if either changed, nothing
+   * is adopted and the rollback checkpoint stays. On success the checkpoint
+   * moves to the adopted envelope; it is never simply cleared.
+   */
   async adopt(): Promise<OpResult> {
     const s = this.state;
-    if (s.status !== "unavailable" || (s.reason !== "regressed" && s.reason !== "replaced")) {
+    const seen = this.observed;
+    if (
+      s.status !== "unavailable" ||
+      (s.reason !== "regressed" && s.reason !== "replaced") ||
+      seen?.kind !== "envelope"
+    ) {
       return "not-allowed";
     }
-    this.checkpoint = null;
-    await this.load();
-    return "ok";
+    const gen = this.generation;
+    return this.serial(async () => {
+      if (gen !== this.generation) {
+        return "superseded";
+      }
+      let now: Observed;
+      try {
+        now = await readStored(this.deps.storage);
+      } catch {
+        return this.failIf(gen, "read-failed");
+      }
+      if (gen !== this.generation) {
+        return "superseded";
+      }
+      if (now.kind !== "envelope" || now.token !== seen.token) {
+        // Something else is stored now; classify it against the unchanged checkpoint.
+        this.observed = now;
+        this.publish(gen, this.classify(now));
+        return "changed";
+      }
+      this.checkpoint = { storeId: now.envelope.storeId, revision: now.envelope.revision };
+      this.observed = now;
+      this.publish(gen, { status: "locked", error: null });
+      return "ok";
+    });
   }
 
   async create(passphrase: string, consent: boolean): Promise<OpResult> {
@@ -227,15 +259,19 @@ export class KeepStore {
     if (this.state.status !== "locked") {
       return "not-allowed";
     }
+    // Bound to the generation at the call: a reload, lock or foreign change
+    // while it waits in the queue invalidates it (PR #8 review, round 2).
+    const gen = this.generation;
     return this.serial(() =>
-      this.state.status === "locked"
-        ? this.unlockNow(passphrase)
-        : Promise.resolve("not-allowed" as const),
+      gen !== this.generation
+        ? Promise.resolve("superseded" as const)
+        : this.state.status === "locked"
+          ? this.unlockNow(passphrase, gen)
+          : Promise.resolve("not-allowed" as const),
     );
   }
 
-  private async unlockNow(passphrase: string): Promise<OpResult> {
-    const gen = this.generation;
+  private async unlockNow(passphrase: string, gen: number): Promise<OpResult> {
     let now: Observed;
     try {
       now = await readStored(this.deps.storage);

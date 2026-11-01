@@ -445,6 +445,74 @@ describe("overlapping operations (PR #8 review)", () => {
   });
 });
 
+describe("queued operations and invalidation (PR #8 review, round 2)", () => {
+  it("drops unlocks queued before a reload", async () => {
+    const area = new FakeArea();
+    const store = await created(area);
+    await store.lock();
+    const gate = deferred();
+    area.getGate = gate.promise;
+    const wrong = store.unlock("wrong passphrase!");
+    await settle();
+    const reloading = store.reload();
+    const a = store.unlock(PASS);
+    const b = store.unlock(PASS);
+    area.getGate = null;
+    gate.resolve();
+    const results = await Promise.all([wrong, reloading, a, b]);
+    expect(results[0]).toBe("wrong-passphrase");
+    expect(results[3]).not.toBe("ok");
+    await settle();
+    expect(store.current.status).toBe("locked");
+  });
+
+  it("keeps rollback protection when an adoption is overtaken", async () => {
+    const area = new FakeArea();
+    const store = await created(area);
+    const rev1 = structuredClone(area.data.get(STORAGE_KEY));
+    await store.setKeep(keep(ID1), true);
+    const rev2 = structuredClone(area.data.get(STORAGE_KEY));
+    await store.setKeep(keep(ID2), true);
+    await store.lock();
+    area.notify = false;
+    area.data.set(STORAGE_KEY, rev2);
+    await store.reload();
+    expect(store.current).toEqual({ status: "unavailable", reason: "regressed" });
+    const gate = deferred();
+    area.getGate = gate.promise;
+    const adopting = store.adopt();
+    await settle();
+    // Another actor restores an even older envelope and the change is delivered.
+    area.notify = true;
+    await area.view().set({ [STORAGE_KEY]: rev1 });
+    area.getGate = null;
+    gate.resolve();
+    expect(await adopting).not.toBe("ok");
+    await settle();
+    await store.reload();
+    // The checkpoint (revision 3) still refuses the older envelopes.
+    expect(store.current).toEqual({ status: "unavailable", reason: "regressed" });
+  });
+
+  it("moves the checkpoint to the adopted envelope instead of clearing it", async () => {
+    const area = new FakeArea();
+    const store = await created(area);
+    const rev1 = structuredClone(area.data.get(STORAGE_KEY));
+    await store.setKeep(keep(ID1), true);
+    const rev2 = structuredClone(area.data.get(STORAGE_KEY));
+    await store.setKeep(keep(ID2), true);
+    await store.lock();
+    area.notify = false;
+    area.data.set(STORAGE_KEY, rev2);
+    await store.reload();
+    expect(await store.adopt()).toBe("ok");
+    expect(store.current.status).toBe("locked");
+    area.data.set(STORAGE_KEY, rev1);
+    await store.reload();
+    expect(store.current).toEqual({ status: "unavailable", reason: "regressed" });
+  });
+});
+
 describe("deletion (AT32)", () => {
   it("deletes the confirmed envelope and returns to absent", async () => {
     const area = new FakeArea();
