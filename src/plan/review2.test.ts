@@ -33,9 +33,18 @@ function holdableStorage(inner: StorageAreaLike) {
       }
       return value;
     },
-    set: (items) => inner.set(items),
+    set: async (items) => {
+      const h = setHold;
+      setHold = null;
+      if (h !== null) {
+        await h; // the write has started but has not landed yet
+      }
+      return inner.set(items);
+    },
     remove: (key) => inner.remove(key),
   };
+  let setHold: Promise<void> | null = null;
+  let releaseSet: () => void = () => undefined;
   return {
     storage,
     holdNext: () => {
@@ -43,6 +52,12 @@ function holdableStorage(inner: StorageAreaLike) {
         release = r;
       });
       return () => release();
+    },
+    holdNextSet: () => {
+      setHold = new Promise<void>((r) => {
+        releaseSet = r;
+      });
+      return () => releaseSet();
     },
   };
 }
@@ -67,45 +82,62 @@ function depsFor(
   };
 }
 
-describe("review 2 #1: ledger transactions finish inside the lock tenure", () => {
-  it("dispose waits for a ledger read-modify-write and fences its write", async () => {
+/** A runs one item and holds its releaseClaim ledger read (or write) when verification ends. */
+async function stalledRelease(r: Rig, phase: "read" | "write") {
+  const held = holdableStorage(r.profile.area.view());
+  const a = controllerFor(r.profile, r.service, r.keep, { ledger: held.storage });
+  const id = await approved({ ...r, controller: a }, [fakeId(1)]);
+  let release: () => void = () => undefined;
+  r.service.override = (op, t) => {
+    if (op === "reconcileOne" && (t as ItemTicket).probe === "list-absent") {
+      // The next ledger get (or set) is releaseClaim's.
+      release = phase === "read" ? held.holdNext() : held.holdNextSet();
+    }
+    return undefined;
+  };
+  void a.start(id);
+  await flush();
+  r.service.override = null;
+  return { a, release: () => release() };
+}
+
+describe("review 2 #1 / review 3: ledger transactions and the lock tenure", () => {
+  it("a fenced read does not hold the lock, and its late result does not overwrite a newer barrier", async () => {
     const r = await rig();
-    const held = holdableStorage(r.profile.area.view());
-    const a = controllerFor(r.profile, r.service, r.keep, { ledger: held.storage });
-    const id = await approved({ ...r, controller: a }, [fakeId(1)]);
-    let releaseRead: () => void = () => undefined;
-    r.service.override = (op, t) => {
-      if (op === "reconcileOne" && (t as ItemTicket).probe === "list-absent") {
-        releaseRead = held.holdNext(); // the next ledger get is releaseClaim's read
-      }
-      return undefined;
-    };
-    void a.start(id);
-    await flush();
+    const { a, release } = await stalledRelease(r, "read");
     a.dispose();
     await flush();
 
     const b = controllerFor(r.profile, r.service, r.keep);
-    expect(await b.collect()).toEqual({ ok: false, reason: "service-busy" });
+    expect((await b.collect()).ok).toBe(true); // the stalled read no longer holds the lock
+    const seen = await b.recoveryStatus();
+    expect((await b.acknowledgeRecovery(seen.kind === "pending" ? seen.token : "")).ok).toBe(true);
+    const idB = await approved({ ...r, controller: b }, [fakeId(2)]);
+    r.service.commitResponse = (t) => Promise.resolve(anomaly(t.execId, { code: "timeout" }));
+    await b.start(idB);
+    await flush();
+    expect(await b.recoveryStatus()).toMatchObject({ kind: "pending", count: 1 });
 
-    releaseRead();
+    release(); // A's read settles now, after B's barrier exists
     await flush();
     const stored = r.profile.area.data.get(ledgerKey("chatgpt")) as {
       epoch: number;
       pending: { count: number } | null;
     };
-    expect(stored.epoch).toBe(0);
-    expect(stored.pending?.count).toBe(1); // the fenced write left the barrier (fail closed)
+    expect(stored.epoch).toBe(1);
+    expect(stored.pending?.count).toBe(1);
+  });
 
-    expect((await b.collect()).ok).toBe(true);
-    const seen = await b.recoveryStatus();
-    expect((await b.acknowledgeRecovery(seen.kind === "pending" ? seen.token : "")).ok).toBe(true);
-    const idB = await approved({ ...r, controller: b }, [fakeId(2)]);
-    r.service.override = null;
-    r.service.commitResponse = (t) => Promise.resolve(anomaly(t.execId, { code: "timeout" }));
-    await b.start(idB);
+  it("a write already started keeps the lock until it lands (fail closed)", async () => {
+    const r = await rig();
+    const { a, release } = await stalledRelease(r, "write");
+    a.dispose();
     await flush();
-    expect(await b.recoveryStatus()).toMatchObject({ kind: "pending", count: 1 });
+    const b = controllerFor(r.profile, r.service, r.keep);
+    expect(await b.collect()).toEqual({ ok: false, reason: "service-busy" });
+    release();
+    await flush();
+    expect((await b.collect()).ok).toBe(true);
   });
 });
 

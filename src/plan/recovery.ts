@@ -32,7 +32,7 @@ export async function clearRecovery(
   deps: RunDeps,
   snap: InventorySnapshot,
   seenToken: string,
-  open: () => boolean,
+  beginWrite: () => boolean,
 ): Promise<Cleared> {
   const read = await readLedger(deps.ledger, deps.provider);
   if (read.kind === "read-failed") {
@@ -49,7 +49,8 @@ export async function clearRecovery(
   }
   // A malformed ledger has no usable epoch; a time-based one cannot collide with a counter.
   const epoch = read.kind === "ok" ? read.ledger.epoch + 1 : Math.max(deps.clock.now(), 1);
-  if (!open()) {
+  // Called synchronously right before the write starts (review 3).
+  if (!beginWrite()) {
     return { ok: false, reason: "not-allowed" };
   }
   const written = await writeLedger(deps.ledger, {

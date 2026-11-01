@@ -134,7 +134,7 @@ export async function claimPending(
   epoch: number,
   now: number,
   newBarrierId: () => string,
-  open: () => boolean,
+  beginWrite: () => boolean,
 ): Promise<LedgerClaim | null> {
   const read = await readLedger(storage, provider);
   if (read.kind !== "ok" || read.ledger.epoch !== epoch) {
@@ -142,8 +142,8 @@ export async function claimPending(
   }
   const next = withOneMorePending(read.ledger, now, newBarrierId);
   const pending = next.pending;
-  // The fence is checked between the read and the write: no write after the tenure ends.
-  if (pending === null || !open() || !(await writeLedger(storage, next))) {
+  // The fence is called synchronously right before the write starts (review 3).
+  if (pending === null || !beginWrite() || !(await writeLedger(storage, next))) {
     return null;
   }
   return Object.freeze({ epoch, barrierId: pending.barrierId });
@@ -160,7 +160,7 @@ export async function releaseClaim(
   storage: LedgerStorage,
   provider: Provider,
   claim: LedgerClaim,
-  open: () => boolean,
+  beginWrite: () => boolean,
 ): Promise<boolean> {
   const read = await readLedger(storage, provider);
   if (read.kind !== "ok") {
@@ -170,7 +170,7 @@ export async function releaseClaim(
   if (l.epoch !== claim.epoch || l.pending?.barrierId !== claim.barrierId) {
     return true;
   }
-  return open() && writeLedger(storage, withOneLessPending(l));
+  return beginWrite() && writeLedger(storage, withOneLessPending(l));
 }
 
 /** Write-ahead before a dispatch: one more pending write. */

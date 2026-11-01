@@ -2,8 +2,10 @@
 // controller in the profile sends requests to a service at a time, and the
 // first request after taking the lock waits a full interval. Ledger
 // read-modify-writes run as transactions of the lock tenure: release()
-// fences them (their write is skipped) and keeps the lock until they have
-// settled, so no write lands under another controller's tenure (review 2 #1).
+// fences them, so a transaction still reading never writes, and keeps the
+// lock only for a write already started, so no write lands under another
+// controller's tenure and a stalled read never pins the lock (review 2 #1,
+// review 3).
 import type { Provider } from "../adapters/contracts";
 import type { Pacer } from "./calls";
 import { type HeldLock, type ServiceLockManager, tryAcquire } from "./environment";
@@ -11,14 +13,15 @@ import { serviceLockName } from "./types";
 
 export type AcquireRefusal = "locks-unavailable" | "service-busy";
 
-/** True while the transaction may still write: the tenure is open and not closing. */
+/** Called synchronously right before a write: true when the write may start (and is then tracked). */
 export type Fence = () => boolean;
 
 export class ServiceSession {
   private held: HeldLock | null = null;
   private closing = false;
   private releasing: Promise<void> = Promise.resolve();
-  private readonly transactions = new Set<Promise<unknown>>();
+  /** Transactions past their fence check, i.e. inside their write. */
+  private readonly writing = new Set<Promise<void>>();
 
   constructor(
     private readonly locks: ServiceLockManager | null,
@@ -58,31 +61,50 @@ export class ServiceSession {
   }
 
   /**
-   * Runs a ledger read-modify-write inside this tenure. `fn` must check the
-   * fence between its read and its write. Refused when the lock is not held.
+   * Runs a ledger read-modify-write inside this tenure. `fn` receives the
+   * fence and must call it synchronously right before it starts its write
+   * (no await between the call and storage.set). A true answer moves the
+   * transaction into its write phase. Refused when the lock is not held.
    */
-  async transaction<T>(fn: (open: Fence) => Promise<T>): Promise<T | "not-held"> {
+  async transaction<T>(fn: (beginWrite: Fence) => Promise<T>): Promise<T | "not-held"> {
     if (!this.holds()) {
       return "not-held";
     }
-    const run = fn(() => this.holds());
-    this.transactions.add(run);
+    let settle: () => void = () => undefined;
+    const done = new Promise<void>((r) => {
+      settle = r;
+    });
+    const beginWrite = (): boolean => {
+      if (!this.holds()) {
+        return false;
+      }
+      this.writing.add(done);
+      return true;
+    };
     try {
-      return await run;
+      return await fn(beginWrite);
     } finally {
-      this.transactions.delete(run);
+      this.writing.delete(done);
+      settle();
     }
   }
 
-  /** Fences open transactions, waits for them, then lets the lock go. */
+  /**
+   * Closes the fence and lets the lock go (review 3). A transaction still in
+   * its read phase is not waited for: once fenced it can no longer write. A
+   * transaction already writing is awaited, because its write landing after
+   * the release could overwrite another controller's newer ledger; if that
+   * write never settles the lock stays held (fail closed; closing the page
+   * releases Web Locks).
+   */
   release(): void {
     const held = this.held;
     if (held === null || this.closing) {
       return;
     }
     this.closing = true;
-    const open = [...this.transactions];
-    this.releasing = Promise.allSettled(open)
+    const writes = [...this.writing];
+    this.releasing = Promise.allSettled(writes)
       .then(() => held.release())
       .finally(() => {
         if (this.held === held) {
