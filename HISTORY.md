@@ -592,7 +592,7 @@ P-0004〜P-0007 は、実ブラウザーでしか確かめられない主張を 
 
 ## P-0009: 削除側の枠組み — 一覧の固定、削除計画、一回限りの承認、逐次実行（DEV09 の中核）
 
-状態: 提案（2026-11-01）。Codex の critique（1 ラウンド、指摘 11 件）を受けて改訂した（末尾「critique への対応」）。PR #10 のレビュー（1 ラウンド、指摘 9 件）で契約を補った（第 1・3・4・6・9 節の「レビュー 1」の記述）。
+状態: 提案（2026-11-01）。Codex の critique（1 ラウンド、指摘 11 件）を受けて改訂した（末尾「critique への対応」）。PR #10 のレビュー（1 ラウンド、指摘 9 件）で契約を補った（第 1・3・4・6・9 節の「レビュー 1」の記述）。2 ラウンド目（指摘 2 件）で第 1・3 節を補った（「レビュー 2」）。
 
 Gate-category: state-machine, concurrency-ownership, shared-state-invariant
 
@@ -724,6 +724,7 @@ interface DeleteAdapter {
 - **gate**: `capabilityEnabled(gate, buildKind)` を純粋な関数とする。配布版は 4 判定がすべて `allowed` のときだけ有効。個人用ビルドは、technical と safety が `allowed`、termsAndPermission が `allowed` か `ownerAcceptedRisk`（このとき `evidenceRefs` が `HISTORY.md#P-0003` を含む）、storePolicy が `allowed` か `notApplicable` のときだけ有効（§10）。`ownerAcceptedRisk` を他の判定に、`notApplicable` を storePolicy 以外に置いた gate は不正として無効にする。ビルドの種類は Controller の引数で受け取る。個人用ビルドを作る切り替えと、配布版に DeleteAdapter が含まれないことのビルド成果物の検査は、所有者の Adapter を組み込む Proposal で決める。それまで実際のビルドに Adapter はなく、何も有効にならない。
 - **宣言の固定**（レビュー 1）: Controller は作られた時点で Read / Delete の descriptor と gate を深く複製して凍結し、判定（検証、間隔、`listedKinds`、`fingerprintFields`、`verificationRule`）にはこの複製だけを使う。Read・Delete の各呼び出しの前と照合を受理する前に、Adapter の生の宣言が複製と一致すること（正準 JSON の比較）を確かめ、違えば無効にする（呼び出す前なら `delete-unavailable` の `failed`、送出の後なら `uncertain`）。計画とスナップショットの Adapter の識別（`adapterId`・`version`）も複製と比べ、違えば計画を作らず承認を通さない。
 - **渡す値の凍結**（レビュー 1）: 計画・承認・各件の結果・解析したレコードは凍結し、Controller が外へ見せるスナップショットは複製とする。Adapter に渡す札と一覧の文脈は呼び出しごとに新しく作って凍結し、主体は複製を入れる（計画の内部の値を Adapter や呼び出し元に渡さない）。`start` は計画の digest を計算し直し、承認の digest と一致しなければ開始しない。
+- **依存の取り込み**（レビュー 2）: Controller は作られた時点で、渡された依存（Adapter、KEEP、記録の保存先、ロック、時計）の参照とメソッドを一度だけ取り込み、自分の凍結した写しから呼ぶ。呼び出し元の依存のオブジェクトの項目を差し替えても、Adapter のメソッドを差し替えても、以後の呼び出しは検証した元の実体へ行く。宣言（descriptor と gate）はその同じ実体から読み、凍結した複製と比べる。
 - **所有者の実装が保証すること**（枠組みでは確かめられず、DEV03 とレビューで確かめる）: `inspectScope`・`listPage`・`preflight`・`reconcileOne` は要求を高々 1 回送り、`prepareCommit` は要求を送らない。`dispatch` は同期のうちに確定の指示を 1 回だけ送り出し（`chrome.tabs.sendMessage` の呼び出しを `dispatch` の中で済ませる）、`await` の後に送ることをしない。文書が `documentKey` と違えば送らずに例外を投げる。要求は INV-17 の固定テンプレートだけで、確定だけが書き込み用テンプレートを使う。札の主体・文書・対象 ID を要求に入れ、他の ID を指さない。`PageValue.subject` はその要求自身の応答（または要求に明示した主体）から得る。`accepted: true` は書き込み要求に想定どおりの応答があった場合だけ返す。`InventoryRecord` の各項目の意味を Adapter の版と共に固定する。アクセストークンは INV-02 の範囲を出さない。
 
 #### 2. サービスごとの排他と要求の間隔（INV-09、INV-19）
@@ -737,6 +738,7 @@ interface DeleteAdapter {
 - `chrome.storage.local` のキー `lizychattidy.run-ledger.<provider>` に、閉じた形の記録 `RunLedger { format: "lizychattidy-run-ledger", schemaVersion: 1, provider, epoch, pending }` を置く。`epoch` は 0 以上の安全な整数、`pending` は `null` か `{ barrierId, count, firstDispatchedAt, lastDispatchedAt }`（`barrierId` は UUID v4、時刻は epoch ms、`count` は 1 以上）。**会話の ID・タイトル・主体の値を含めない**（AT28。BLUEPRINT §5 は識別情報を同意のもとで暗号化して保存するとしており、未確認の件の ID を平文で残さないため）。KEEP の封筒とは別のキーで、KEEP の保存形式を変えない。
 - 書き込みはサービスのロックの中で、読み直した記録に対してだけ行う。確定ごとに、送出の前に `count` を 1 増やして書く（先行書き込み。初めての件では `pending` を作る）。書けなければ送出しない（`failed`、`ledger-write-failed`）。送出しなかった件（KEEP で除外、停止）と `verified` の件は、その後 `count` を 1 減らし、0 になれば `pending` を `null` にする。`uncertain` の件は減らさない。
 - 記録の結び付け（レビュー 1）: 先行書き込みは、記録の `epoch` が計画の `ledgerEpoch` と同じ場合だけ行い、その件が数えられた `epoch` と `barrierId` を「請求」として Controller のメモリに残す。減らすのは、記録の `epoch` と `pending.barrierId` が請求と一致する場合だけである。復旧で消えた障壁（`epoch` か `barrierId` が違う）には触れない（その後の別の障壁の件数を、古い照合が消さない）。請求のない件は減らさない。
+- ロックの在任中の取引（レビュー 2）: 記録の読み取りから書き込みまで（先行書き込み、減算、復旧の確認）は、サービスのロックの同じ在任の中の取引として行い、比較は同じ在任の中で読んだ値に対して行う。ロックを手放すとき（`dispose` を含む）は、まず進行中の取引に柵をかけ（読み取りの後の書き込みをさせない。件数は残り、安全側に倒れる）、取引が終わるのを待ってからロックを放す。その間、他の Controller はロックを取れない。
 - 記録が読めない・形が不正・`pending` が `null` でない場合、どの Controller も実行を開始しない（`recovery-required`）。管理画面を閉じても、別のタブでも同じである。`epoch` は承認と計画に記録し（後述）、復旧で 1 増やして、それより前の計画・承認を通さない。
 - **復旧の手順**: 利用者が新しい一覧を取得し（スナップショットの `capturedAt` が `lastDispatchedAt` より後）、`draft` で「結果未確認の書き込みが N 件あります。サービスの画面で確認しました」を明示的に選ぶ（`acknowledgeRecovery`）。サービスのロックの中で、記録が確認時に見たもの（`barrierId` または不正な形の文字列）と一致すれば、`pending` を `null`、`epoch` を 1 増やして書き、このスナップショットに新しい `epoch` を記録する。一致しなければ何もしない。同じ Controller の中で、送出した `uncertain` の件を照合で `verified` にできた場合は、その件の分だけ `count` を減らせる（第 9 節）。
 - 拡張を削除すると記録も消える。KEEP の保存データの削除（FR11）はこの記録を消さない。

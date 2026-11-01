@@ -5,6 +5,7 @@ import { MIN_INTERVAL_FLOOR_MS } from "../adapters/descriptor";
 import { AdapterBinding } from "./adapterBinding";
 import { ApprovalBook } from "./approval";
 import { Pacer } from "./calls";
+import { captureDeps } from "./captured";
 import type { InventorySnapshot } from "./inventory";
 import type { LedgerClaim } from "./ledger";
 import type { DeletePlan } from "./plan";
@@ -32,7 +33,12 @@ export class RunState {
   readonly session: ServiceSession;
   readonly adapters: AdapterBinding;
 
-  constructor(readonly deps: RunDeps) {
+  /** The controller's own captured copy; the caller's object is never read again (review 2 #2). */
+  readonly deps: RunDeps;
+
+  constructor(callerDeps: RunDeps) {
+    const deps = captureDeps(callerDeps);
+    this.deps = deps;
     this.adapters = new AdapterBinding(deps.read, deps.del, deps.build);
     const interval = this.adapters.read?.minIntervalMs ?? MIN_INTERVAL_FLOOR_MS;
     this.pacer = new Pacer(deps.clock, Math.max(interval, MIN_INTERVAL_FLOOR_MS));
@@ -125,6 +131,7 @@ export class RunState {
         this.claims.set(id, claim);
       },
       claimOf: (id) => this.claims.get(id),
+      ledgerTx: (fn) => this.session.transaction(fn),
       noteRetryAfter: (s) => {
         this.retryAfter = s ?? this.retryAfter;
       },

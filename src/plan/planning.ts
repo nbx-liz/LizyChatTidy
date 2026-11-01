@@ -173,7 +173,11 @@ export async function acknowledgeRecovery(s: RunState, seenToken: string): Promi
     return no(busy);
   }
   try {
-    const cleared = await clearRecovery(s.deps, snap, seenToken);
+    const result = await s.session.transaction((open) =>
+      clearRecovery(s.deps, snap, seenToken, open),
+    );
+    const cleared =
+      result === "not-held" ? ({ ok: false, reason: "not-allowed" } as const) : result;
     if (!cleared.ok) {
       return no(cleared.reason);
     }

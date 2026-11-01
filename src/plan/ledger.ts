@@ -134,6 +134,7 @@ export async function claimPending(
   epoch: number,
   now: number,
   newBarrierId: () => string,
+  open: () => boolean,
 ): Promise<LedgerClaim | null> {
   const read = await readLedger(storage, provider);
   if (read.kind !== "ok" || read.ledger.epoch !== epoch) {
@@ -141,7 +142,8 @@ export async function claimPending(
   }
   const next = withOneMorePending(read.ledger, now, newBarrierId);
   const pending = next.pending;
-  if (pending === null || !(await writeLedger(storage, next))) {
+  // The fence is checked between the read and the write: no write after the tenure ends.
+  if (pending === null || !open() || !(await writeLedger(storage, next))) {
     return null;
   }
   return Object.freeze({ epoch, barrierId: pending.barrierId });
@@ -150,13 +152,15 @@ export async function claimPending(
 /**
  * Takes one pending write back, but only from the barrier it was counted in.
  * A barrier that was cleared by recovery (another epoch or barrier id) is
- * left untouched: its count belongs to someone else. Returns false only when
- * the ledger cannot be read or written.
+ * left untouched: its count belongs to someone else. Returns false when the
+ * ledger cannot be read or written, or the fence closed between the read and
+ * the write (the count then stays: fail closed).
  */
 export async function releaseClaim(
   storage: LedgerStorage,
   provider: Provider,
   claim: LedgerClaim,
+  open: () => boolean,
 ): Promise<boolean> {
   const read = await readLedger(storage, provider);
   if (read.kind !== "ok") {
@@ -166,7 +170,7 @@ export async function releaseClaim(
   if (l.epoch !== claim.epoch || l.pending?.barrierId !== claim.barrierId) {
     return true;
   }
-  return writeLedger(storage, withOneLessPending(l));
+  return open() && writeLedger(storage, withOneLessPending(l));
 }
 
 /** Write-ahead before a dispatch: one more pending write. */

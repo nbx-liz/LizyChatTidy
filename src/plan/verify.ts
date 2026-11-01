@@ -76,5 +76,8 @@ export async function verifyItem(ctx: RunContext, id: string): Promise<Step> {
   if (claim === undefined) {
     return "continue";
   }
-  return (await releaseClaim(deps.ledger, deps.provider, claim)) ? "continue" : "failed";
+  const released = await ctx.ledgerTx((open) =>
+    releaseClaim(deps.ledger, deps.provider, claim, open),
+  );
+  return released === true ? "continue" : "failed";
 }

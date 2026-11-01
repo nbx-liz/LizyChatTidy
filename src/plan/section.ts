@@ -35,6 +35,8 @@ export interface RunContext {
   setItem(id: string, patch: Partial<ItemResult>): void;
   setClaim(id: string, claim: LedgerClaim): void;
   claimOf(id: string): LedgerClaim | undefined;
+  /** A ledger read-modify-write inside the service-lock tenure (review 2 #1). */
+  ledgerTx<T>(fn: (open: () => boolean) => Promise<T>): Promise<T | "not-held">;
   noteRetryAfter(seconds: number | null): void;
 }
 

@@ -625,7 +625,8 @@ describe("PINV-12 unresolved writes survive the controller", () => {
     r.service.commitResponse = null;
     await flush(); // another tab sees the lock only after the manager released it
     expect(await b.start(idB)).toEqual({ ok: false, reason: "recovery-required" });
-    await r.controller.collect();
+    await flush(); // b's lock is let go asynchronously, after its open ledger transactions
+    expect((await r.controller.collect()).ok).toBe(true);
     const status = await r.controller.recoveryStatus();
     expect(
       (await r.controller.acknowledgeRecovery(status.kind === "pending" ? status.token : "")).ok,

@@ -131,7 +131,10 @@ export class ItemRunner {
     }
     const epoch = plan.snapshot.ledgerEpoch;
     const now = deps.clock.now();
-    const claim = await claimPending(deps.ledger, deps.provider, epoch, now, deps.newId);
+    const claimed = await ctx.ledgerTx((open) =>
+      claimPending(deps.ledger, deps.provider, epoch, now, deps.newId, open),
+    );
+    const claim = claimed === "not-held" ? null : claimed;
     if (claim === null) {
       ctx.setItem(id, { outcome: "failed", reason: "ledger-write-failed" });
       return "failed";
@@ -147,7 +150,9 @@ export class ItemRunner {
       return markUncertain(ctx, id, "adapter-error");
     }
     // Not dispatched: take the write-ahead back from its own barrier.
-    const released = await releaseClaim(deps.ledger, deps.provider, claim);
+    const released =
+      (await ctx.ledgerTx((open) => releaseClaim(deps.ledger, deps.provider, claim, open))) ===
+      true;
     const step = this.notDispatched(id, section.kind);
     if (released || step === "disposed") {
       return step;
