@@ -614,10 +614,14 @@ export class KeepStore {
     return this.failIf(gen, outcome);
   }
 
-  private become(gen: number, session: Session): boolean {
+  private become(gen: number, incoming: Session): boolean {
     if (gen !== this.generation) {
       return false;
     }
+    // The published state and the session share one deep-frozen entry list,
+    // so no caller holding `current.entries` can remove a KEEP from the
+    // session that later bindings and writes read (PR #10 review sweep).
+    const session: Session = { ...incoming, entries: frozenEntries(incoming.entries) };
     this.session = session;
     this.checkpoint = { storeId: session.envelope.storeId, revision: session.envelope.revision };
     this.observed = {

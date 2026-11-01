@@ -319,6 +319,25 @@ describe("writes (KINV-3)", () => {
   });
 });
 
+describe("published entries cannot change the session (PR #10 review sweep)", () => {
+  it("rejects mutation of current.entries and keeps the KEEP in later bindings and writes", async () => {
+    const area = new FakeArea();
+    const store = await created(area);
+    await store.setKeep(keep(ID1), true);
+    const state = store.current;
+    if (state.status !== "available") {
+      throw new Error("expected available");
+    }
+    const list = state.entries as KeepEntry[];
+    expect(() => list.splice(0, list.length)).toThrow(TypeError);
+    expect(() => {
+      (list[0] as { conversationId: string }).conversationId = ID2;
+    }).toThrow(TypeError);
+    expect(await store.setKeep(keep(ID2), true)).toBe("ok");
+    expect(await decryptStored(area)).toEqual({ revision: 3, entries: [keep(ID1), keep(ID2)] });
+  });
+});
+
 describe("lock and pending work (KINV-6)", () => {
   it("waits for a write already sent, then sends no further write", async () => {
     const area = new FakeArea();
